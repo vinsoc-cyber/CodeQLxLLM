@@ -41,6 +41,7 @@ from vuln_hunter_x.core.constants import (
     DEFAULT_LLM_MAX_TOKENS,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_SEED,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_OLLAMA_BASE_URL,
     PROMPT_RETRY_MAX_TOKENS,
@@ -57,6 +58,11 @@ from vuln_hunter_x.llm.key_pool import KeyPool, extract_retry_after
 from vuln_hunter_x.llm.prompts import PromptBuilder
 
 logger = logging.getLogger(__name__)
+
+# #150: distinguishes "caller did not specify a seed" (fall back to the
+# client's fixed seed) from an explicit ``seed=None`` (request provider
+# entropy, used by the self-consistency voting samples).
+_SEED_UNSET: Any = object()
 
 
 def _extract_cached_input_tokens(usage: Any) -> int:
@@ -98,6 +104,7 @@ class LLMClient:
         provider: str = DEFAULT_LLM_PROVIDER,
         model: str = DEFAULT_LLM_MODEL,
         temperature: float = DEFAULT_LLM_TEMPERATURE,
+        seed: int | None = DEFAULT_LLM_SEED,
         max_tokens: int = DEFAULT_LLM_MAX_TOKENS,
         num_retries: int = 1,
         request_timeout: float = 180.0,
@@ -113,6 +120,10 @@ class LLMClient:
                 "deepseek", or "gemini").
             model: Model name (e.g. "gpt-4o", "claude-sonnet-4-20250514").
             temperature: Sampling temperature for LLM responses.
+            seed: Fixed sampling seed sent on every completion so identical
+                input reproduces identical output run-to-run (#150). ``None``
+                disables seeding. Dropped by litellm on providers without
+                seed support.
             max_tokens: Maximum tokens in LLM response.
             num_retries: Times LiteLLM will retry transient failures
                 (RateLimitError, APIConnectionError, Timeout, InternalServerError)
@@ -133,6 +144,7 @@ class LLMClient:
         self.provider = provider
         self.model = model
         self.temperature = temperature
+        self.seed = seed
         self.max_tokens = max_tokens
         # #149: attach response_format=json_object where supported; cleared for
         # the session if an endpoint rejects it (see _completion).
@@ -223,6 +235,7 @@ class LLMClient:
         self,
         messages: list[dict],
         temperature: float | None = None,
+        seed: Any = _SEED_UNSET,
     ) -> dict:
         """Build kwargs for litellm.completion with provider-specific settings."""
         model = self.model
@@ -261,6 +274,12 @@ class LLMClient:
             "max_tokens": self.max_tokens,
             "timeout": self.request_timeout,
         }
+        # #150: fixed seed for run-to-run reproducibility; litellm.drop_params
+        # strips it on providers without seed support. ``seed=None`` (the
+        # voting samples) requests provider entropy.
+        resolved_seed = self.seed if seed is _SEED_UNSET else seed
+        if resolved_seed is not None:
+            kwargs["seed"] = resolved_seed
         if api_base:
             kwargs["api_base"] = api_base
         if api_key:
@@ -383,11 +402,15 @@ class LLMClient:
         raise last_err
 
     def _complete_and_meter(
-        self, messages: list[dict], temperature: float | None, max_tokens: int | None = None
+        self,
+        messages: list[dict],
+        temperature: float | None,
+        max_tokens: int | None = None,
+        seed: Any = _SEED_UNSET,
     ) -> tuple[str, dict]:
         """Run one completion turn. Returns ``(raw_content, usage_delta)`` where
         ``usage_delta`` carries total/input/output/cached-input tokens and cost."""
-        kwargs = self._build_completion_kwargs(messages, temperature=temperature)
+        kwargs = self._build_completion_kwargs(messages, temperature=temperature, seed=seed)
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         response = self._completion(kwargs)
@@ -409,13 +432,13 @@ class LLMClient:
         return raw, delta
 
     def _complete_parse_retry(
-        self, messages: list[dict], temperature: float | None
+        self, messages: list[dict], temperature: float | None, seed: Any = _SEED_UNSET
     ) -> tuple[str, dict, dict]:
         """Complete + parse; retry ONCE on a truncated/unparseable envelope before
         accepting the abstention (#149). A length truncation retries with a larger
         ``max_tokens``. Returns ``(raw, parsed, usage_delta)`` with usage summed
         across both attempts. Verdict-neutral on a healthy response (no retry)."""
-        raw, delta = self._complete_and_meter(messages, temperature)
+        raw, delta = self._complete_and_meter(messages, temperature, seed=seed)
         parsed = self._parse_response(raw)
         if parsed.get("parse_failed"):
             retry_tokens = (
@@ -428,7 +451,9 @@ class LLMClient:
                 "truncated" if parsed.get("truncated") else "unparseable",
                 f" at max_tokens={retry_tokens}" if retry_tokens else "",
             )
-            raw2, delta2 = self._complete_and_meter(messages, temperature, max_tokens=retry_tokens)
+            raw2, delta2 = self._complete_and_meter(
+                messages, temperature, max_tokens=retry_tokens, seed=seed
+            )
             for k in delta:
                 delta[k] += delta2[k]
             parsed2 = self._parse_response(raw2)
@@ -450,6 +475,7 @@ class LLMClient:
         force_decision: bool = True,
         prefetched_context: dict[str, str] | None = None,
         temperature: float | None = None,
+        seed: Any = _SEED_UNSET,
         context_start_line: int = 1,
         decision_strategy: DecisionStrategy | None = None,
     ) -> Verdict:
@@ -576,7 +602,7 @@ class LLMClient:
                 # envelope so a length artifact can't silently become an abstention
                 # that force-decision then launders into a verdict.
                 raw_response, parsed, _delta = self._complete_parse_retry(
-                    messages, temperature
+                    messages, temperature, seed=seed
                 )
                 all_raw_responses.append(raw_response)
 
@@ -705,6 +731,7 @@ class LLMClient:
                                 total_output_tokens,
                                 total_cached_input_tokens,
                                 temperature=temperature,
+                                seed=seed,
                             )
                             verdict = parsed.get("verdict", "False Positive")
                             iterations += 1
@@ -844,6 +871,7 @@ class LLMClient:
                     total_output_tokens,
                     total_cached_input_tokens,
                     temperature=temperature,
+                    seed=seed,
                 )
                 iterations += 1
                 elapsed = time.time() - start_time
@@ -955,7 +983,9 @@ class LLMClient:
 
         # Sample N runs at the elevated voting temperature. Threaded through
         # as a per-call kwarg so the client instance remains stateless w.r.t.
-        # temperature, making concurrent callers safe.
+        # temperature, making concurrent callers safe. Each sample gets a
+        # distinct derived seed: samples stay diverse relative to each other
+        # while the vote as a whole remains reproducible run-to-run (#150).
         verdicts: list[Verdict] = []
         for k in range(samples):
             v = self.analyze(
@@ -971,6 +1001,7 @@ class LLMClient:
                 force_decision=force_decision,
                 prefetched_context=prefetched_context,
                 temperature=voting_temperature,
+                seed=None if self.seed is None else self.seed + k,
                 context_start_line=context_start_line,
             )
             verdicts.append(v)
@@ -1335,13 +1366,14 @@ class LLMClient:
         total_output_tokens: int = 0,
         total_cached_input_tokens: int = 0,
         temperature: float | None = None,
+        seed: Any = _SEED_UNSET,
     ) -> tuple[dict[str, Any], str, int, float, int, int, int]:
         """Execute one forced-decision LLM turn.
 
         Returns (parsed, raw, total_tokens, total_cost, total_input, total_output, total_cached_input).
         """
         messages.append({"role": "user", "content": self._FORCE_DECISION_PROMPT})
-        kwargs = self._build_completion_kwargs(messages, temperature=temperature)
+        kwargs = self._build_completion_kwargs(messages, temperature=temperature, seed=seed)
         response = self._completion(kwargs)
         raw = response.choices[0].message.content or "" if response.choices else ""
         all_raw_responses.append(raw)

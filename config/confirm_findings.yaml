@@ -31,8 +31,14 @@
 # Set to 1 to disable multi-turn
 max_iterations: 10
 
-# LLM temperature (0.0 = deterministic, 1.0 = creative)
-temperature: 0.2
+# LLM temperature (0.0 = deterministic, 1.0 = creative). Single-pass
+# verification runs greedy + seeded so identical input reproduces identical
+# verdicts (#150); the self-consistency voting path sets its own temperature.
+temperature: 0.0
+
+# Fixed sampling seed for run-to-run reproducibility (#150). Set to null to
+# disable seeding and restore provider entropy.
+seed: 42
 
 # Maximum tokens in LLM response
 max_tokens: 5000

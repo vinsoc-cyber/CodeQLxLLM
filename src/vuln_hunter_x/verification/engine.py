@@ -671,6 +671,7 @@ class VerificationEngine:
             provider=config.llm.provider,
             model=config.llm.model,
             temperature=config.llm.temperature,
+            seed=config.llm.seed,
             max_tokens=config.llm.max_tokens,
             num_retries=config.llm.num_retries,
             request_timeout=config.llm.request_timeout,
