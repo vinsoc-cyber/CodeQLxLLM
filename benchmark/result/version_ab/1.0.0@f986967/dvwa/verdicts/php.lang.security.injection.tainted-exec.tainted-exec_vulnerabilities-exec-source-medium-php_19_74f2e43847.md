@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-exec.tainted-exec @ vulnerabilities/exec/source/medium.php:19
+
+**Verdict:** TP · **Confidence:** High (0.0) · **Truth:** real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+1. The data originates from the request superglobal $_REQUEST['ip'] (line 5) – user‑controlled input. 2. The value is assigned to $target (line 5), then passed through a blacklist removal via str_replace on line 14, which only strips the strings '&&' and ';'. 3. The sanitisation is a naive blacklist; it does not remove other shell metacharacters such as '|', '`', '$(', '\n', '>', etc., nor does it quote the argument, so it is insufficient to prevent command injection. 4. The sanitized (or not) $target is concatenated into a string that is handed to shell_exec on line 19 (Windows) or line 23 (*nix). shell_exec launches a system shell, making this an OS‑command sink. 5. No framework or library automatic protection is present; the code runs in plain PHP without any escaping functions. 6. The script only checks that $_POST['Submit'] is set; there is no authentication, so any unauthenticated client can trigger the path. 7. An attacker can inject additional shell commands (e.g., using '|', '`', or newline) and achieve remote code execution with the privileges of the web‑server user, leading to full RCE, data theft, or DoS. 8. The weakest link is the inadequate sanitisation (blacklist) before concatenation into the command string, which allows command‑control characters to bypass the intended restriction. [policy:command_injection entailed]

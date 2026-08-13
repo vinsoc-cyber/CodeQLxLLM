@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-exec.tainted-exec @ vulnerabilities/exec/source/high.php:26
+
+**Verdict:** TP · **Confidence:** High (0.0) · **Truth:** real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The code obtains user‑controlled data from $_REQUEST['ip'] (line 5) – a remote HTTP request source, so attacker_control is PROVEN. The value is stored in $target, then subjected only to a blacklist replace (line 21) that removes a limited set of characters. No quoting or escapeshellarg/escapeshellcmd is applied. The (potentially still malicious) $target is concatenated into a command string passed to shell_exec (line 26 for Windows, line 30 for *nix). shell_exec launches a system shell, making the sink a qualifying OS command sink. Because the attacker‑controlled string is concatenated directly into the command line, the command channel is a shell‑command‑text path. The blacklist does not cover many command‑control characters (e.g., newline, single pipe, redirection, etc.) and no proper escaping is performed, therefore a bypass is possible; neutralization_coverage is therefore BYPASS_PATH_FOUND. The snippet provides no indication of environment (production vs test), so production_scope is UNKNOWN. The vulnerability is reachable by any client that can submit a POST request with the 'Submit' field, i.e., no authentication is required, leading to remote code execution (RCE) under the web‑server's privileges. [policy:command_injection entailed]

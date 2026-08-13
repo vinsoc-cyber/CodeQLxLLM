@@ -1,0 +1,27 @@
+{
+  "previous": "1.0.0@64c11fb",
+  "current": "1.0.0@f986967",
+  "flips": [],
+  "totals": {
+    "flips": 0,
+    "improve": 0,
+    "regress": 0,
+    "neutral": 0
+  },
+  "deltas": {
+    "precision": 0.0,
+    "recall": 0.0
+  },
+  "resource_deltas": {
+    "input_tokens": 6720,
+    "output_tokens": 2376,
+    "cached_input_tokens": 0,
+    "cache_hit_ratio": 0.0,
+    "elapsed_seconds": 67.3,
+    "iterations_mean": 0.2,
+    "cost_usd": 0.0,
+    "n_error": 0,
+    "n_abstain": 0
+  },
+  "timestamp": "2026-08-13T17:13:44"
+}

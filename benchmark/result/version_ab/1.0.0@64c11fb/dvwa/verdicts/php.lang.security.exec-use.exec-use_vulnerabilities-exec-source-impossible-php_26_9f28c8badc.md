@@ -1,0 +1,7 @@
+# php.lang.security.exec-use.exec-use @ vulnerabilities/exec/source/impossible.php:26
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The user‑controlled value $target originates from $_REQUEST['ip'] (line 8) and is passed through stripslashes (line 9), exploded (line 12), validated with is_numeric on each octet and a size check (line 15), and reassembled (line 17). The resulting string is concatenated into a shell_exec call on line 26, which launches an OS command, satisfying the sink_binding. Because the source is a request superglobal, attacker_control is PROVEN, and the data flow reaches the sink, so flow_to_sink is REACHES. The value is inserted directly into the command string, making the command channel a shell‑command‑text path. Validation restricts the value to numeric octets only, eliminating shell metacharacters; therefore there is no bypass path and neutralization coverage applies to all reaching paths. No framework‑level escaping or sandboxing is present, and the code can be triggered by any POST request with the Submit field, implying unauthenticated access. The impact is limited to executing ping with a user‑supplied IP, not arbitrary command execution, so the defenses (numeric validation) constitute the weakest link but are sufficient to prevent command injection. [policy:command_injection false_positive: command_channel=SHELL_COMMAND_TEXT_PATH_FOUND, neutralization_coverage=ALL_REACHING_PATHS]

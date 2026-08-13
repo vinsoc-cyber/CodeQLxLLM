@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-exec.tainted-exec @ vulnerabilities/exec/source/impossible.php:26
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The user-controlled value originates from $_REQUEST['ip'] (line 8). It is passed through stripslashes (line 9), exploded (line 12), validated with is_numeric on each of the four parts and size check (line 15), and then reassembled (line 17) before being concatenated into a string passed to shell_exec (line 26). The sink is a shell command execution via shell_exec, which qualifies as an OS command sink. The data flow from source to sink is direct and reaches the sink. The command is built by simple string concatenation, so the command channel is a shell command text path. Validation ensures each octet is numeric, which eliminates shell metacharacters; therefore all reaching paths are covered against injection, giving ALL_REACHING_PATHS neutralization coverage. No framework or library automatic protections are present. The code is reachable by any POST request with the 'Submit' field, implying unauthenticated access. If injection were possible, the impact would be remote code execution, but the numeric validation mitigates this, limiting impact to a ping of a user‑supplied IP. [policy:command_injection false_positive: command_channel=SHELL_COMMAND_TEXT_PATH_FOUND, neutralization_coverage=ALL_REACHING_PATHS]

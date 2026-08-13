@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-exec.tainted-exec @ vulnerabilities/exec/source/impossible.php:26
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The code obtains user‑controlled data from $_REQUEST['ip'] on line 8 (source). It strips slashes (line 9), splits on '.' (line 12), and validates that each of the four parts is numeric with is_numeric() and that exactly four parts are present (line 15). After validation the parts are recombined into $target on line 17. The resulting $target is concatenated into a command string passed to shell_exec on line 26 (sink), forming a literal shell command text. Because is_numeric() only permits digits, optional sign, decimal point, and scientific‑notation characters, an attacker cannot inject shell metacharacters (e.g., ';', '&', '|', '`', '$(') into any octet, so the command string cannot be broken out of the intended argument position. Thus the numeric check provides complete neutralisation for the reachable path, giving ALL_REACHING_PATHS coverage. The sink is a true OS‑command execution (shell_exec), confirming QUALIFYING_OS_COMMAND_SINK. The data flow from the request to the sink is evident, and the command channel is a concatenated shell command string, thus SHELL_COMMAND_TEXT_PATH_FOUND. No information is available about the deployment context, so production_scope is marked UNKNOWN. [policy:command_injection false_positive: command_channel=SHELL_COMMAND_TEXT_PATH_FOUND, neutralization_coverage=ALL_REACHING_PATHS]

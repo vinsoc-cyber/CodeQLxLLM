@@ -1,0 +1,7 @@
+# php.lang.security.exec-use.exec-use @ vulnerabilities/exec/source/impossible.php:22
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The flagged line (22) calls shell_exec with a command string that includes the user‑supplied value $target (derived from $_REQUEST['ip'] on line 8). The data flow passes through stripslashes (line 9), explode (line 12), numeric checks (line 15) and re‑assembly (line 17) before reaching the sink. The numeric checks ensure each octet consists only of characters accepted by is_numeric (digits, optional leading sign, decimal point), which excludes any shell metacharacters such as ';', '&', '|', '`', whitespace, or newline. Therefore the attacker‑controlled value cannot inject additional shell commands, and the validation provides coverage for all reachable paths. The command is executed via the shell (shell_exec), satisfying the OS‑command sink definition. No framework‑level escaping is applied, and the code can be triggered by any visitor (no authentication). The main impact would be the ability to cause the server to ping an arbitrary IP, leading to possible DoS or information‑leakage, but not arbitrary code execution. The weakest link is the lack of stricter IP range validation, though it does not enable command injection. [policy:command_injection false_positive: command_channel=SHELL_COMMAND_TEXT_PATH_FOUND, neutralization_coverage=ALL_REACHING_PATHS]

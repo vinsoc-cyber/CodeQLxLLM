@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-sql-string.tainted-sql-string @ vulnerabilities/bac/source/medium.php:21
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The code reads the user‑controlled GET parameter `$_GET['user_id']` (line 13) and, after a digit‑only regex check (line 14), assigns it to `$id` (line 17). `$id` is concatenated into a SQL string on line 21 (`$check_query = "SELECT user_id FROM users WHERE user_id = '$id'";`) and later on line 28 for a profile query. Both strings are passed to `mysqli_query` (lines 22 and 29), which executes relational SQL, satisfying the sink_binding requirement. The source is clearly external user input, so attacker_control is PROVEN. The data reaches the sink, so flow_to_sink is REACHES, and because the value is interpolated into the query text, query_channel is SQL_TEXT_PATH_FOUND. The only mitigation is the regex `preg_match('/^\d+$/', $_GET['user_id'])` which restricts the value to digits only; this whitelist prevents any characters that could break out of the quoted literal, covering all paths that reach the sink, thus neutralization_coverage is ALL_REACHING_PATHS. The file resides in a DVWA (Deliberately Vulnerable Web Application) example directory, indicating it is not production code, so production_scope is set to EXAMPLE_DEV. [policy:sql_injection false_positive: neutralization_coverage=ALL_REACHING_PATHS]

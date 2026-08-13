@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-exec.tainted-exec @ vulnerabilities/exec/source/high.php:26
+
+**Verdict:** TP · **Confidence:** High (0.0) · **Truth:** real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The code obtains user‑controlled data from $_REQUEST['ip'] (line 5) and stores it in $target. It then applies a blacklist replacement (line 21) that removes a limited set of characters but does not fully neutralize shell metacharacters. The resulting $target is concatenated into a command string passed to shell_exec (line 26 for Windows, line 30 for *nix). shell_exec launches a system shell, so the sink is an OS command execution point. The data flow from the request to the sink is direct and unprotected, establishing attacker control. Because the value is inserted into a plain command string, the attacker can inject shell control characters that are not removed (e.g., newline, quotes, other operators), giving a command‑injection path (BYPASS_PATH_FOUND). No framework or library sanitization is applied, and the script is reachable by any POST request that includes the 'Submit' field, meaning unauthenticated users can trigger it. The impact is remote code execution (RCE) on the server. The weakest link is the inadequate blacklist sanitization; a proper allowlist or escapeshellarg()/escapeshellcmd() would be required to mitigate the vulnerability. [policy:command_injection entailed]

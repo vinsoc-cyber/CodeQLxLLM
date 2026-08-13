@@ -1,0 +1,7 @@
+# php.lang.security.tainted-exec.tainted-exec @ vulnerabilities/exec/source/impossible.php:26
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The code reads the user‑controlled value from $_REQUEST['ip'] (line 8) – a proven external source. It strips slashes (line 9), splits on dots, and validates that each of the four parts is numeric (line 14) and that exactly four parts exist. After validation the parts are recomposed into a dotted IPv4 string (line 17). This recomposed value is concatenated into a command string passed to shell_exec (line 26), which executes the OS command. Because the only data that can reach the sink is constrained to digits and periods, no shell metacharacters can be introduced; thus all reaching paths are effectively neutralized by the numeric validation. The sink is clearly an OS command execution function, so it qualifies as an OS command sink. The data flow from source to sink is direct and reachable via a POST request with no authentication checks, making the attacker control proven. No framework‑level automatic protection applies to this sink beyond the CSRF token check, which does not affect command injection. Consequently the weakest link is the reliance on the numeric validation; however that validation fully prevents injection, so neutralization coverage is considered complete for all paths. [policy:command_injection false_positive: command_channel=SHELL_COMMAND_TEXT_PATH_FOUND, neutralization_coverage=ALL_REACHING_PATHS]

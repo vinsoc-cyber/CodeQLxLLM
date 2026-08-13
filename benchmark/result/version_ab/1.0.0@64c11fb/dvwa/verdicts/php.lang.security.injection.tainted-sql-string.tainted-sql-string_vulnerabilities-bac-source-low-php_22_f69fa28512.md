@@ -1,0 +1,7 @@
+# php.lang.security.injection.tainted-sql-string.tainted-sql-string @ vulnerabilities/bac/source/low.php:22
+
+**Verdict:** FP · **Confidence:** High (0.0) · **Truth:** not-real · **Grade:** CORRECT · **Iterations:** 1
+
+## Reasoning
+
+The data originates from the external request parameter `$_GET['user_id']` (line 15) and is also read from `$_COOKIE['user_id']` (line 30). The value flows through a numeric validation (`preg_match('/^\d+$/', ...)` on line 16) and an integer cast (`intval` on line 19), then is interpolated into a raw SQL string on line 22 (`$check_query = "SELECT user_id FROM users WHERE user_id = $id"`). The same `$id` is later used in another raw query on line 35. Both statements are executed with `mysqli_query` (lines 23 and 36), which constitutes a relational SQL sink. No ORM or prepared‑statement mechanism is used, so there is no automatic protection. The attacker only needs to be an authenticated user (the script already knows the current user via `dvwaCurrentUser()` and checks the cookie) and can control `$_GET['user_id']`. Because the input is strictly numeric and cast to an integer before interpolation, the numeric context is safely bounded, providing full coverage of the reaching paths. The code appears to be part of the DVWA test suite, indicating an example/development scope rather than production. [policy:sql_injection false_positive: neutralization_coverage=ALL_REACHING_PATHS]
