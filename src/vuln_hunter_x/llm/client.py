@@ -65,6 +65,16 @@ logger = logging.getLogger(__name__)
 _SEED_UNSET: Any = object()
 
 
+def _parsed_signals(parsed: dict) -> dict:
+    """Structured self-report signals from the verdict envelope (#150).
+
+    Missing or non-dict ``signals`` returns ``{}`` so downstream
+    post-processing falls back to its legacy phrase heuristics.
+    """
+    sig = parsed.get("signals")
+    return sig if isinstance(sig, dict) else {}
+
+
 def _extract_cached_input_tokens(usage: Any) -> int:
     """Pull cache-hit input-token count from a LiteLLM/OpenAI usage object.
 
@@ -761,6 +771,7 @@ class LLMClient:
                         cost_usd=total_cost_usd,
                         confidence_score=parsed.get("confidence_score", 0.3),
                         data_flow=parsed.get("data_flow", ""),
+                        signals=_parsed_signals(parsed),
                     )
 
                 # Deduplicate context requests against previously fulfilled ones
@@ -809,6 +820,7 @@ class LLMClient:
                         cached_input_tokens=total_cached_input_tokens,
                         cost_usd=total_cost_usd,
                         confidence_score=parsed.get("confidence_score", 0.3),
+                        signals=_parsed_signals(parsed),
                     )
 
                 # Build follow-up
@@ -891,6 +903,7 @@ class LLMClient:
                     cached_input_tokens=total_cached_input_tokens,
                     cost_usd=total_cost_usd,
                     confidence_score=parsed.get("confidence_score", 0.3),
+                    signals=_parsed_signals(parsed),
                 )
             except Exception:
                 logger.debug("Force decision after max iterations failed", exc_info=True)
@@ -1288,6 +1301,7 @@ class LLMClient:
                 cached_input_tokens=previous_verdict.cached_input_tokens,
                 cost_usd=previous_verdict.cost_usd,
                 confidence_score=previous_verdict.confidence_score,
+                signals=previous_verdict.signals,
             )
 
         _usage = getattr(response, "usage", None)
@@ -1329,6 +1343,7 @@ class LLMClient:
             cached_input_tokens=previous_verdict.cached_input_tokens + delta_cached,
             cost_usd=previous_verdict.cost_usd + delta_cost,
             confidence_score=parsed.get("confidence_score", 0.3),
+            signals=_parsed_signals(parsed) or previous_verdict.signals,
         )
 
     _FORCE_DECISION_PROMPT = (
