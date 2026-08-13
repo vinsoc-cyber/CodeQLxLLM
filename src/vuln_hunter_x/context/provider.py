@@ -60,6 +60,18 @@ _SKIP_DIRS = frozenset(
     {"node_modules", "dist", "build", "coverage", ".git", ".next", "out", "vendor"}
 )
 
+# Route-registration shapes (#121). An Express-style handler is MOUNTED, not
+# called — `app.post('/contributions', auth, h.handleContributionsUpdate)`
+# produces no caller row in callers.csv, so the deciding attacker path sits one
+# file away from the handler and caller resolution used to concede with
+# "[No callers found]". Line-level heuristic: a route-registration call token
+# plus a word-bounded reference to the handler on the same line.
+_JS_ROUTE_REGISTRATION_RE = re.compile(
+    r"\b(?:app|router|server|api)\s*\.\s*(?:get|post|put|delete|patch|all|use|route)\s*\(",
+    re.IGNORECASE,
+)
+_JS_SOURCE_EXTS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".tsx")
+
 
 @dataclass
 class _GrepBounds:
@@ -537,6 +549,52 @@ class ContextProvider:
             EvidenceStatus.NOT_FOUND_COMPLETE, target, (), scan_complete=True
         )
 
+    def scan_js_route_bindings(
+        self, repo_name: str, lang: str, handler_name: str, limit: int = 5
+    ) -> list[tuple[SourceRef, str]]:
+        """Find Express-style route registrations that mount ``handler_name``
+        (#121). Returns up to ``limit`` ``(SourceRef, stripped_line)`` pairs.
+
+        Line-level and conservative: a match needs both a route-registration
+        token (``app.post(`` / ``router.use(`` ...) and a word-bounded
+        reference to the handler on the same line. ``_SKIP_DIRS``
+        (node_modules, vendor, dist, ...) are excluded; any walk/read failure
+        returns what was found so far or ``[]`` — this is a best-effort
+        retrieval aid, never an authority for absence.
+        """
+        if not handler_name:
+            return []
+        root = resolve_repo_root(self.repos_dir, lang, repo_name)
+        if root is None:
+            return []
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            return []
+        name_pat = re.compile(r"(?<!\w)" + re.escape(handler_name) + r"(?!\w)")
+        out: list[tuple[SourceRef, str]] = []
+        try:
+            for path in sorted(resolved_root.rglob("*")):
+                if len(out) >= limit:
+                    break
+                if not path.is_file() or path.suffix.lower() not in _JS_SOURCE_EXTS:
+                    continue
+                rel_parts = path.relative_to(resolved_root).parts
+                if any(p in _SKIP_DIRS for p in rel_parts[:-1]):
+                    continue
+                rel = path.relative_to(resolved_root).as_posix()
+                for i, line in enumerate(
+                    path.read_text(encoding="utf-8", errors="replace").splitlines(),
+                    start=1,
+                ):
+                    if name_pat.search(line) and _JS_ROUTE_REGISTRATION_RE.search(line):
+                        out.append((SourceRef(repo_name, lang, rel, i, i), line.strip()))
+                        if len(out) >= limit:
+                            break
+        except (OSError, ValueError):
+            return out
+        return out
+
     def _resolve_caller(
         self,
         req: EvidenceRequest,
@@ -571,6 +629,30 @@ class ContextProvider:
                         exhaustive=False,
                         provenance=(SourceRef(repo_name, lang, caller_file, start, end),),
                     )
+
+        # Route-binding fallback (#121): before conceding "no callers", check
+        # whether the handler is mounted as an HTTP route in a sibling file —
+        # that IS the production caller the verifier keeps hedging on.
+        if (lang or "").lower() in ("javascript", "typescript"):
+            bindings = self.scan_js_route_bindings(repo_name, lang, callee_name)
+            if bindings:
+                shown = "\n".join(
+                    f"//   {ref.file}:{ref.start}: {text}" for ref, text in bindings
+                )
+                content = (
+                    f"// Route bindings found for: {callee_name} — the function is "
+                    "mounted as an HTTP route handler. Requests to the route(s) "
+                    "below reach it with an attacker-controlled request object:\n"
+                    f"{shown}"
+                )
+                return EvidenceResult(
+                    req,
+                    EvidenceStatus.FOUND,
+                    content,
+                    EvidenceScope.REPOSITORY_INDEX,
+                    exhaustive=False,
+                    provenance=tuple(ref for ref, _ in bindings),
+                )
 
         # Diagnostic: check if function exists but has no callers. A best-effort
         # call graph never proves "no callers", so both cases are INCOMPLETE.
