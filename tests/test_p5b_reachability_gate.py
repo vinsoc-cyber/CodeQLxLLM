@@ -163,11 +163,14 @@ def test_non_go_not_touched_and_provider_not_called():
     assert prov.calls == 0
 
 
-def test_non_cwe208_not_touched_and_provider_not_called():
+def test_non_cwe208_go_findings_also_gated():
+    # #162 widened the gate from CWE-208 to every Go CWE: the evidence guards
+    # (unique symbol, all-test callers, zero non-test references) are
+    # class-independent, so a test-only SQL-injection TP abstains the same way.
     prov = _FakeProvider()
     v = _run(_tp(finding=_finding(cwes=("CWE-89",))), prov)
-    assert v.verdict == "True Positive"
-    assert prov.calls == 0
+    assert v.verdict == "Needs More Data"
+    assert v.decision_source == _REACHABILITY_GATE
 
 
 def test_fp_and_nmd_unchanged_provider_not_called():
