@@ -1350,7 +1350,13 @@ class LLMClient:
         "This is your final analysis attempt. Based on ALL the evidence you have seen so far, "
         "which direction does the balance of evidence lean? You MUST choose True Positive or "
         "False Positive. Low confidence is acceptable. Needs More Data is NOT an acceptable "
-        "final response.\n\n"
+        "final response, with the single unresolved-reachability exception below.\n\n"
+        "EXCEPTION for unresolved reachability: if the flagged sink is dangerous on its face "
+        "(no adequate defense on the visible path) and the ONLY fact preventing a decision is "
+        "whether any production caller / route / entry point reaches this code (caller context "
+        "was requested but could not be resolved), answer \"Needs More Data\" and set "
+        "signals.sole_blocker = \"unseen_caller\". A potentially real bug must be queued for "
+        "review — never dismissed as False Positive for want of an unseen caller.\n\n"
         "GUIDELINE (decide by CONSEQUENCE at the flagged sink, not by absence of a defense): "
         "choose True Positive only when you can name a concrete, attacker-reachable consequence "
         "at the flagged sink — a real exploit path with real impact (code/command execution, "
@@ -1413,6 +1419,25 @@ class LLMClient:
         # verdict: promoting NMD to TP on taint vocabulary ("no validation",
         # "unsafe") systematically over-confirms findings the model could not
         # actually decide (#119).
+        #
+        # #121: one deterministic override, keyed on the structured signal
+        # (never on prose, #150) — a dismissal whose self-reported sole blocker
+        # is an unseen caller/route contradicts itself: the model could not
+        # name the deciding fact, so the finding is held for review, not
+        # dismissed.
+        if (
+            parsed.get("verdict") == "False Positive"
+            and _parsed_signals(parsed).get("sole_blocker") == "unseen_caller"
+        ):
+            parsed["verdict"] = "Needs More Data"
+            parsed["confidence"] = "Low"
+            parsed["confidence_score"] = min(
+                float(parsed.get("confidence_score") or 0.3), 0.3
+            )
+            parsed["reasoning"] = (parsed.get("reasoning") or "") + (
+                " [force-decision guard: dismissed while reporting the sole "
+                "blocker is an unseen caller/route — held as Needs More Data (#121)]"
+            )
         return (
             parsed,
             raw,
