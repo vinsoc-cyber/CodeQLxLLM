@@ -161,5 +161,26 @@ system_prompt: |
     "confidence": "High" | "Medium" | "Low",  // EXACTLY one of these three — no "Very High", "VeryHigh", or other variants
     "confidence_score": 0.85,
     "reasoning": "1-2 sentence explanation referencing your answers and data flow",
-    "context_needed": ["caller:main", "struct:buffer_t"]
+    "context_needed": ["caller:main", "struct:buffer_t"],
+    "signals": {{
+      "line_citations": true,
+      "pollution_scope": null,
+      "path_source": null,
+      "crosses_trust_boundary": null
+    }}
   }}
+
+  The "signals" object is machine-read — always include it and set every field:
+  - line_citations: true ONLY if your answers/data_flow cite the deciding evidence
+    with concrete line numbers (line N / file:line); false if your conclusion rests
+    on the pattern alone.
+  - pollution_scope: for prototype-pollution findings only — "global" if the shared
+    Object.prototype is affected, "instance" if only a single object's [[Prototype]]
+    can change; null for every other vulnerability class.
+  - path_source: for path/file-access findings only — "external" if the tainted path
+    originates from a network/request input, "cli" if it comes from argv/environment/
+    stdin supplied by whoever runs the program; null otherwise or when unknown.
+  - crosses_trust_boundary: true if the flagged flow lets a LESS-privileged party
+    drive a MORE-privileged operation (network request into a server, upload, setuid,
+    sandbox escape); false if the input is controlled by the same party who runs the
+    code; null when unknown.

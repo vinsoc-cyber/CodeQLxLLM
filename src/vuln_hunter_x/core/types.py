@@ -178,6 +178,13 @@ class Verdict:
     cost_usd: float = 0.0
     confidence_score: float = 0.0
     data_flow: str = ""
+    # #150: structured self-report emitted in the verdict envelope's "signals"
+    # object (line_citations, pollution_scope, path_source,
+    # crosses_trust_boundary). The deterministic post-processing passes branch
+    # on these fields instead of substring-matching the reasoning prose; an
+    # empty dict (model omitted them) falls back to the legacy phrase
+    # heuristics.
+    signals: dict = field(default_factory=dict)
     # Which decision path produced this verdict: "legacy_model" (the model's own
     # verdict) or "policy" (the rule-family evidence-closure gate). Legacy
     # finalizers (arms, downgraders, reconciliation, sibling re-verify) must not
