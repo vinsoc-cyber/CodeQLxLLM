@@ -401,6 +401,7 @@ from vuln_hunter_x.context.anchor import (
     REANCHORED_UNIQUE,
     STRUCTURAL_NMD_RESOLUTIONS,
     AnchorResolution,
+    _norm,
     resolve_anchor,
 )
 from vuln_hunter_x.context.evidence import EvidenceStatus, SourceRef
@@ -512,6 +513,131 @@ def _is_nonproduction_path(file_path: str) -> bool:
     if any(name in stem_lower for name in _NONPROD_FILENAMES):
         return True
     return bool(_NONPROD_STEM_RE.search(stem))
+
+
+_SIBLING_GATE = "sibling_consistency_gate"
+
+# Construct-shape normalization (#122 residual). Sibling lines that differ only
+# in identifier names — `eval(req.body.roth)` / `eval(req.body.preTax)` — are
+# the same security question under the same rule, yet were still able to ship
+# opposite verdicts (case identity merges exact duplicates only). Masking
+# strings, numbers, and non-call identifiers (call names like `eval` /
+# `parseInt` are KEPT, so different sinks never collapse into one shape) makes
+# such siblings comparable.
+_SHAPE_STR_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+_SHAPE_NUM_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+_SHAPE_IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*(?!\s*\()")
+
+
+def _construct_shape(snippet: str) -> str:
+    """Whitespace-normalize and mask a sink snippet into its construct shape."""
+    s = _norm(snippet or "")
+    if not s:
+        return ""
+    s = _SHAPE_STR_RE.sub("'S'", s)
+    s = _SHAPE_NUM_RE.sub("0", s)
+    return _SHAPE_IDENT_RE.sub("I", s)
+
+
+def _flag_sibling_contradictions(verdicts: list["Verdict"]) -> list["Verdict"]:
+    """Hold dismissals that contradict a confirmed normalized-identical sibling
+    (#122 residual).
+
+    Groups legacy-model verdicts by (repo, lang, file, rule, construct shape).
+    When a group carries both a True Positive and a False Positive, the same
+    security question received opposite answers — the dismissals are held as
+    Needs-More-Data naming the confirmed sibling, so no report ships opposite
+    verdicts on the same construct. Abstain-only by design: the confirmed side
+    is never demoted and an NMD sibling is never promoted deterministically
+    (one sibling may still differ upstream; a human closes the group). Policy /
+    structural / gate verdicts are never touched.
+    """
+    groups: dict[tuple, list[Verdict]] = {}
+    for v in verdicts:
+        if getattr(v, "decision_source", "legacy_model") != "legacy_model":
+            continue
+        f = getattr(v, "finding", None)
+        if f is None:
+            continue
+        shape = _construct_shape(getattr(f, "sink_snippet", ""))
+        if not shape:
+            continue
+        key = (f.repo_name, f.lang, _norm_path(f.file), f.rule_id, shape)
+        groups.setdefault(key, []).append(v)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        tps = [v for v in group if v.verdict in ("True Positive", "TP")]
+        fps = [v for v in group if v.verdict in ("False Positive", "FP")]
+        if not tps or not fps:
+            continue
+        sib = tps[0].finding
+        for v in fps:
+            v.verdict = "Needs More Data"
+            v.confidence = "Low"
+            v.confidence_score = min(v.confidence_score or 1.0, 0.3)
+            v.decision_source = _SIBLING_GATE
+            v.reasoning = (v.reasoning or "") + (
+                f" [sibling_consistency_gate: dismissed while the normalized-"
+                f"identical construct at {sib.file}:{sib.start_line} was "
+                f"confirmed under the same rule — held for review (#122)]"
+            )
+    return verdicts
+
+
+_COHERENCE_GATE = "coherence_gate"
+
+# Explicit conclusion assertions only (with a negation guard). This is NOT
+# prose sentiment analysis (#150 retired that): it detects the one incoherent
+# envelope shape observed in the field — a verdict label contradicting the
+# reasoning's own spelled-out conclusion ("... so this specific finding is a
+# false positive" emitted under verdict=True Positive, #162/#122).
+_ASSERTS_FP_RE = re.compile(
+    r"\b(?:is|remains|therefore)\s+a\s+false\s+positive\b", re.IGNORECASE
+)
+_NEGATED_FP_RE = re.compile(
+    r"\b(?:not|isn't|isn)\W{0,3}a?\s*false\s+positive\b", re.IGNORECASE
+)
+_ASSERTS_TP_RE = re.compile(
+    r"\b(?:is|remains|therefore)\s+a\s+(?:true\s+positive|real\s+(?:vulnerability|bug|issue))\b",
+    re.IGNORECASE,
+)
+_NEGATED_TP_RE = re.compile(
+    r"\b(?:not|isn't|isn)\W{0,3}a?\s*(?:true\s+positive|real\s+(?:vulnerability|bug|issue))\b",
+    re.IGNORECASE,
+)
+
+
+def _hold_incoherent_verdict(verdict: Verdict) -> Verdict:
+    """Hold a verdict whose label contradicts its reasoning's own conclusion.
+
+    Observed shape (#162, signature.go:67): verdict = True Positive while the
+    reasoning concludes "...the reported sink line is misidentified, so this
+    specific finding is a false positive". Deliberately narrow — only an
+    explicit "is a false/true positive" assertion opposite to the label fires,
+    negations are guarded, and the action is an abstention (NMD, held for
+    review), never a flip to the reasoning's side.
+    """
+    if getattr(verdict, "decision_source", "legacy_model") != "legacy_model":
+        return verdict
+    text = verdict.reasoning or ""
+    if verdict.verdict in ("True Positive", "TP"):
+        contradicts = bool(_ASSERTS_FP_RE.search(text)) and not _NEGATED_FP_RE.search(text)
+    elif verdict.verdict in ("False Positive", "FP"):
+        contradicts = bool(_ASSERTS_TP_RE.search(text)) and not _NEGATED_TP_RE.search(text)
+    else:
+        return verdict
+    if not contradicts:
+        return verdict
+    verdict.verdict = "Needs More Data"
+    verdict.confidence = "Low"
+    verdict.confidence_score = min(verdict.confidence_score or 1.0, 0.3)
+    verdict.decision_source = _COHERENCE_GATE
+    verdict.reasoning = (verdict.reasoning or "") + (
+        " [coherence_gate: the verdict label contradicts the reasoning's own "
+        "conclusion — held as Needs More Data for review]"
+    )
+    return verdict
 
 
 # Dev/mock entrypoint detection (#162). A standalone development binary
@@ -1024,6 +1150,11 @@ class VerificationEngine:
             rep_verdicts = [rep_by_pos[pos] for pos in sorted(rep_by_pos)]
 
         verdicts = self._project_cases(cases, rep_verdicts, findings)
+
+        # #122 residual: a dismissal contradicting a confirmed normalized-
+        # identical sibling (same rule, same file, identifiers-only diff) is
+        # held for review — no report ships opposite verdicts on one construct.
+        verdicts = _flag_sibling_contradictions(verdicts)
 
         for v in verdicts:
             stats[v.verdict] = stats.get(v.verdict, 0) + 1
@@ -1606,6 +1737,9 @@ class VerificationEngine:
         # binary (cmd/mockserver/...) has no production attacker path — abstain
         # to NMD, never dismiss.
         verdict = _downgrade_dev_mock_entrypoint(verdict, finding)
+        # Coherence gate (#162/#122): a verdict label that contradicts the
+        # reasoning's own explicit conclusion is held for review.
+        verdict = _hold_incoherent_verdict(verdict)
 
         return verdict
 
