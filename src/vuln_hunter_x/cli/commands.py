@@ -35,6 +35,45 @@ def _int_env(name: str) -> int | None:
         return None
 
 
+def _wire_local_path(repos_dir: Path, lang: str, name: str, local_path: Path) -> str | None:
+    """Wire ``--local-path`` into the workspace as ``repos/<lang>/<name>``.
+
+    An existing entry is reused only when it already resolves to
+    ``local_path``. A pre-existing symlink to a *different* target, or a real
+    directory that is not the requested source, is an error: silently reusing
+    it would analyze the old tree and report the results as if they were the
+    requested target (#158). A dangling symlink is repointed.
+
+    Returns an error message on a mismatch, or ``None`` when the path is
+    wired (created or validated).
+    """
+    target_repo_dir = repos_dir / lang / name
+    if target_repo_dir.is_symlink():
+        current = Path(os.path.realpath(target_repo_dir))
+        if current == local_path:
+            return None
+        if not target_repo_dir.exists():
+            # Dangling link left by a deleted checkout — safe to repoint.
+            target_repo_dir.unlink()
+        else:
+            return (
+                f"repos/{lang}/{name} is already linked to {current}, not the requested "
+                f"--local-path {local_path}. Refusing to silently analyze the previously "
+                f"wired tree. Remove the link ({target_repo_dir}) or pass a different --name."
+            )
+    elif target_repo_dir.exists():
+        if target_repo_dir.resolve() == local_path:
+            return None
+        return (
+            f"repos/{lang}/{name} already exists ({target_repo_dir}) and is not the "
+            f"requested --local-path {local_path}. Refusing to silently analyze it. "
+            f"Move it aside or pass a different --name."
+        )
+    target_repo_dir.parent.mkdir(parents=True, exist_ok=True)
+    target_repo_dir.symlink_to(local_path)
+    return None
+
+
 def _find_db_name_by_source_root(
     local_path: Path, lang: str, output_dir: Path
 ) -> str | None:
@@ -792,12 +831,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 )
         lang = args.lang
         # Ensure repo dir exists for Semgrep/OpenGrep (symlink if needed)
-        target_repo_dir = repos_dir / lang / name
-        if not target_repo_dir.exists():
-            target_repo_dir.parent.mkdir(parents=True, exist_ok=True)
-            if target_repo_dir.is_symlink():
-                target_repo_dir.unlink()
-            target_repo_dir.symlink_to(local_path)
+        wire_error = _wire_local_path(repos_dir, lang, name, local_path)
+        if wire_error:
+            print(f"Error: {wire_error}", file=sys.stderr)
+            return 1
         # Set filters so only this repo is analyzed
         args.repo = name
         args.lang = lang
@@ -986,13 +1023,10 @@ def _run_context_extraction(
             print("Error: --lang is required with --local-path.", file=sys.stderr)
             return 1
         name = name or local_path.name
-        lang_filter = lang_filter
-        target_repo_dir = repos_dir / lang_filter / name
-        if not target_repo_dir.exists():
-            target_repo_dir.parent.mkdir(parents=True, exist_ok=True)
-            if target_repo_dir.is_symlink():
-                target_repo_dir.unlink()
-            target_repo_dir.symlink_to(local_path)
+        wire_error = _wire_local_path(repos_dir, lang_filter, name, local_path)
+        if wire_error:
+            print(f"Error: {wire_error}", file=sys.stderr)
+            return 1
         repo_filter = name
 
     # ── Discover sources ──────────────────────────────────────────
@@ -1116,12 +1150,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
             return 1
         name = getattr(args, "name", None) or local_path.name
         repos_dir = base_path / "repos"
-        target_repo_dir = repos_dir / args.lang / name
-        if not target_repo_dir.exists():
-            target_repo_dir.parent.mkdir(parents=True, exist_ok=True)
-            if target_repo_dir.is_symlink():
-                target_repo_dir.unlink()
-            target_repo_dir.symlink_to(local_path)
+        wire_error = _wire_local_path(repos_dir, args.lang, name, local_path)
+        if wire_error:
+            print(f"Error: {wire_error}", file=sys.stderr)
+            return 1
         args.repo = name
 
     # Load config
