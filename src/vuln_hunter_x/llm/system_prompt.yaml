@@ -166,7 +166,8 @@ system_prompt: |
       "line_citations": true,
       "pollution_scope": null,
       "path_source": null,
-      "crosses_trust_boundary": null
+      "crosses_trust_boundary": null,
+      "sole_blocker": null
     }}
   }}
 
@@ -184,3 +185,6 @@ system_prompt: |
     drive a MORE-privileged operation (network request into a server, upload, setuid,
     sandbox escape); false if the input is controlled by the same party who runs the
     code; null when unknown.
+  - sole_blocker: "unseen_caller" when the ONLY fact preventing a decision is whether
+    any production caller / route / entry point reaches the flagged code (the sink is
+    dangerous on its face and caller context could not be resolved); null otherwise.
