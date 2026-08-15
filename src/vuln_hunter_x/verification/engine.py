@@ -317,27 +317,28 @@ _REACHABILITY_GATE = "reachability_gate"
 
 
 def _downgrade_test_only_reachability(verdict, finding, provider, analysis_line):
-    """Withhold a Go CWE-208 True Positive whose exact enclosing function is
-    test-only (P5b).
+    """Withhold a Go True Positive whose exact enclosing function is test-only
+    (P5b, generalized across CWEs for #162).
 
     Fires only when: the final verdict is a legacy-model True Positive on a Go
-    ``CWE-208`` finding; the resolved sink line lands in exactly one, repository-
-    wide-uniquely-named, non-test, non-``main``/``init`` function; that function
+    finding; the resolved sink line lands in exactly one, repository-wide-
+    uniquely-named, non-test, non-``main``/``init`` function; that function
     has >= 1 recorded caller and every recorded caller sits in a ``*_test.go``
     file (unbounded, file-qualified enumeration); AND a complete scan finds no
     reference to the function anywhere in visible non-test Go source. The verdict
     then becomes Needs-More-Data (``decision_source="reachability_gate"``) — a
-    timing side channel reached only from tests has unresolved production
-    reachability, and a static call graph cannot prove absence, so this abstains
-    and NEVER dismisses. Any failure/uncertainty leaves the verdict unchanged.
+    dangerous construct reached only from tests has unresolved production
+    reachability regardless of its CWE class (the argument is about the attacker
+    path, not the construct), and a static call graph cannot prove absence, so
+    this abstains and NEVER dismisses. Originally shipped scoped to CWE-208
+    (#174); #162 widened it to every Go CWE since all the evidence guards are
+    class-independent. Any failure/uncertainty leaves the verdict unchanged.
     """
     if verdict.verdict not in ("True Positive", "TP"):
         return verdict
     if getattr(verdict, "decision_source", "legacy_model") != "legacy_model":
         return verdict
     if (finding.lang or "").lower() != "go":
-        return verdict
-    if "CWE-208" not in set(getattr(finding, "cwe_ids", None) or []):
         return verdict
     if not isinstance(provider, ContextProvider):
         return verdict
@@ -378,6 +379,7 @@ from vuln_hunter_x.context.anchor import (
     REANCHORED_UNIQUE,
     STRUCTURAL_NMD_RESOLUTIONS,
     AnchorResolution,
+    _norm,
     resolve_anchor,
 )
 from vuln_hunter_x.context.evidence import EvidenceStatus, SourceRef
@@ -489,6 +491,198 @@ def _is_nonproduction_path(file_path: str) -> bool:
     if any(name in stem_lower for name in _NONPROD_FILENAMES):
         return True
     return bool(_NONPROD_STEM_RE.search(stem))
+
+
+_SIBLING_GATE = "sibling_consistency_gate"
+
+# Construct-shape normalization (#122 residual). Sibling lines that differ only
+# in identifier names — `eval(req.body.roth)` / `eval(req.body.preTax)` — are
+# the same security question under the same rule, yet were still able to ship
+# opposite verdicts (case identity merges exact duplicates only). Masking
+# strings, numbers, and non-call identifiers (call names like `eval` /
+# `parseInt` are KEPT, so different sinks never collapse into one shape) makes
+# such siblings comparable.
+_SHAPE_STR_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+_SHAPE_NUM_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+_SHAPE_IDENT_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*(?!\s*\()")
+
+
+def _construct_shape(snippet: str) -> str:
+    """Whitespace-normalize and mask a sink snippet into its construct shape."""
+    s = _norm(snippet or "")
+    if not s:
+        return ""
+    s = _SHAPE_STR_RE.sub("'S'", s)
+    s = _SHAPE_NUM_RE.sub("0", s)
+    return _SHAPE_IDENT_RE.sub("I", s)
+
+
+def _flag_sibling_contradictions(verdicts: list["Verdict"]) -> list["Verdict"]:
+    """Hold dismissals that contradict a confirmed normalized-identical sibling
+    (#122 residual).
+
+    Groups legacy-model verdicts by (repo, lang, file, rule, construct shape).
+    When a group carries both a True Positive and a False Positive, the same
+    security question received opposite answers — the dismissals are held as
+    Needs-More-Data naming the confirmed sibling, so no report ships opposite
+    verdicts on the same construct. Abstain-only by design: the confirmed side
+    is never demoted and an NMD sibling is never promoted deterministically
+    (one sibling may still differ upstream; a human closes the group). Policy /
+    structural / gate verdicts are never touched.
+    """
+    groups: dict[tuple, list[Verdict]] = {}
+    for v in verdicts:
+        if getattr(v, "decision_source", "legacy_model") != "legacy_model":
+            continue
+        f = getattr(v, "finding", None)
+        if f is None:
+            continue
+        shape = _construct_shape(getattr(f, "sink_snippet", ""))
+        if not shape:
+            continue
+        key = (f.repo_name, f.lang, _norm_path(f.file), f.rule_id, shape)
+        groups.setdefault(key, []).append(v)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        tps = [v for v in group if v.verdict in ("True Positive", "TP")]
+        fps = [v for v in group if v.verdict in ("False Positive", "FP")]
+        if not tps or not fps:
+            continue
+        sib = tps[0].finding
+        for v in fps:
+            v.verdict = "Needs More Data"
+            v.confidence = "Low"
+            v.confidence_score = min(v.confidence_score or 1.0, 0.3)
+            v.decision_source = _SIBLING_GATE
+            v.reasoning = (v.reasoning or "") + (
+                f" [sibling_consistency_gate: dismissed while the normalized-"
+                f"identical construct at {sib.file}:{sib.start_line} was "
+                f"confirmed under the same rule — held for review (#122)]"
+            )
+    return verdicts
+
+
+_COHERENCE_GATE = "coherence_gate"
+
+# Explicit conclusion assertions only (with a negation guard). This is NOT
+# prose sentiment analysis (#150 retired that): it detects the one incoherent
+# envelope shape observed in the field — a verdict label contradicting the
+# reasoning's own spelled-out conclusion ("... so this specific finding is a
+# false positive" emitted under verdict=True Positive, #162/#122).
+_ASSERTS_FP_RE = re.compile(
+    r"\b(?:is|remains|therefore)\s+a\s+false\s+positive\b", re.IGNORECASE
+)
+_NEGATED_FP_RE = re.compile(
+    r"\b(?:not|isn't|isn)\W{0,3}a?\s*false\s+positive\b", re.IGNORECASE
+)
+_ASSERTS_TP_RE = re.compile(
+    r"\b(?:is|remains|therefore)\s+a\s+(?:true\s+positive|real\s+(?:vulnerability|bug|issue))\b",
+    re.IGNORECASE,
+)
+_NEGATED_TP_RE = re.compile(
+    r"\b(?:not|isn't|isn)\W{0,3}a?\s*(?:true\s+positive|real\s+(?:vulnerability|bug|issue))\b",
+    re.IGNORECASE,
+)
+
+
+def _hold_incoherent_verdict(verdict: Verdict) -> Verdict:
+    """Hold a verdict whose label contradicts its reasoning's own conclusion.
+
+    Observed shape (#162, signature.go:67): verdict = True Positive while the
+    reasoning concludes "...the reported sink line is misidentified, so this
+    specific finding is a false positive". Deliberately narrow — only an
+    explicit "is a false/true positive" assertion opposite to the label fires,
+    negations are guarded, and the action is an abstention (NMD, held for
+    review), never a flip to the reasoning's side.
+    """
+    if getattr(verdict, "decision_source", "legacy_model") != "legacy_model":
+        return verdict
+    text = verdict.reasoning or ""
+    if verdict.verdict in ("True Positive", "TP"):
+        contradicts = bool(_ASSERTS_FP_RE.search(text)) and not _NEGATED_FP_RE.search(text)
+    elif verdict.verdict in ("False Positive", "FP"):
+        contradicts = bool(_ASSERTS_TP_RE.search(text)) and not _NEGATED_TP_RE.search(text)
+    else:
+        return verdict
+    if not contradicts:
+        return verdict
+    verdict.verdict = "Needs More Data"
+    verdict.confidence = "Low"
+    verdict.confidence_score = min(verdict.confidence_score or 1.0, 0.3)
+    verdict.decision_source = _COHERENCE_GATE
+    verdict.reasoning = (verdict.reasoning or "") + (
+        " [coherence_gate: the verdict label contradicts the reasoning's own "
+        "conclusion — held as Needs More Data for review]"
+    )
+    return verdict
+
+
+# Dev/mock entrypoint detection (#162). A standalone development binary
+# (``cmd/mockserver/main.go``, ``tools/fakeapi/...``) is a real ``main``
+# package under a normally-named path, so neither the test-path detection nor
+# the test-only-caller gate sees it — yet it is not part of any deployed
+# service, and its handlers are only reachable by running the mock by hand.
+# ``mock``/``fake``/``stub`` are matched as segment PREFIXES (mockserver,
+# fakeapi, stubclient); the remaining tokens are word-bounded so production
+# names (device, developer, devops) never match. Tradeoff documented: an
+# unlikely production segment like ``stubborn`` would match the prefix rule —
+# the consequence is an abstention (TP -> NMD, kept auditable), never a
+# dismissal.
+_DEV_MOCK_PREFIX_RE = re.compile(r"^(?:mock|fake|stub)", re.IGNORECASE)
+_DEV_MOCK_WORD_RE = re.compile(
+    r"(?:^|[_-])(?:dev|demo|sandbox|sample|example|examples|playground|scratch)(?:$|[_-])",
+    re.IGNORECASE,
+)
+
+
+def _is_dev_mock_entrypoint_path(file_path: str) -> bool:
+    """True when *file_path* sits under a standalone dev/mock binary directory
+    (e.g. ``cmd/mockserver/main.go``) or its filename stem carries a dev/mock
+    token. Complements :func:`_is_nonproduction_path`, whose anchored stem rule
+    deliberately misses prefix-composed names like ``mockserver``.
+    """
+    if not file_path:
+        return False
+    normalized = file_path.replace("\\", "/").strip()
+    if normalized.lower().startswith("file://"):
+        normalized = normalized[7:].lstrip("/")
+    parts = [p for p in normalized.split("/") if p]
+    if not parts:
+        return False
+    segments = parts[:-1] + [parts[-1].rsplit(".", 1)[0]]
+    return any(
+        _DEV_MOCK_PREFIX_RE.search(seg) or _DEV_MOCK_WORD_RE.search(seg)
+        for seg in segments
+    )
+
+
+def _downgrade_dev_mock_entrypoint(verdict, finding):
+    """Withhold a True Positive inside a standalone dev/mock entrypoint (#162).
+
+    A dangerous construct in a development mock (hardcoded-token gRPC handler in
+    ``cmd/mockserver/main.go``) carries no production attacker path: the binary
+    is not a deployed service entrypoint, so "external input" reaches it only
+    when a developer runs the mock by hand. Mirrors the test-only reachability
+    gate's posture — abstain to Needs-More-Data (``reachability_gate``), never
+    dismiss, and never touch policy-sourced verdicts.
+    """
+    if verdict.verdict not in ("True Positive", "TP"):
+        return verdict
+    if getattr(verdict, "decision_source", "legacy_model") != "legacy_model":
+        return verdict
+    if not _is_dev_mock_entrypoint_path(finding.file):
+        return verdict
+    verdict.verdict = "Needs More Data"
+    verdict.confidence = "Low"
+    verdict.confidence_score = min(verdict.confidence_score or 1.0, 0.3)
+    verdict.decision_source = _REACHABILITY_GATE
+    verdict.reasoning = (verdict.reasoning or "") + (
+        " [reachability_gate: model TP withheld; the finding sits in a standalone "
+        "dev/mock entrypoint that is not part of any deployed service, so the "
+        "flagged construct has no established production attacker path]"
+    )
+    return verdict
 
 
 # Taint-source markers (#121). The scanner's data-flow SOURCE already encodes the
@@ -934,6 +1128,11 @@ class VerificationEngine:
 
         verdicts = self._project_cases(cases, rep_verdicts, findings)
 
+        # #122 residual: a dismissal contradicting a confirmed normalized-
+        # identical sibling (same rule, same file, identifiers-only diff) is
+        # held for review — no report ships opposite verdicts on one construct.
+        verdicts = _flag_sibling_contradictions(verdicts)
+
         for v in verdicts:
             stats[v.verdict] = stats.get(v.verdict, 0) + 1
 
@@ -1302,6 +1501,19 @@ class VerificationEngine:
                 "More Data over confirming a pattern that cannot reach a dangerous "
                 "value in this context."
             )
+        elif _is_dev_mock_entrypoint_path(finding.file):
+            # #162: a standalone dev/mock binary (cmd/mockserver/main.go) is a
+            # real `main` under a normally-named path, so the non-production
+            # stem rule above misses it. Same posture: FLAG, never drop.
+            prefetched_context["NOTE: dev/mock entrypoint"] = (
+                "This finding is in a standalone DEVELOPMENT / MOCK binary (a "
+                "dev/mock entrypoint directory), not a deployed service. Its "
+                "handlers and inputs are only reachable by running the mock by "
+                "hand, so an 'external request' here is not a production attacker "
+                "path. Unless you can trace a real production caller to this code, "
+                "weight reachability accordingly and prefer False Positive / Needs "
+                "More Data over confirming the construct."
+            )
 
         # Taint-source reachability signal (#121): the scanner's data-flow SOURCE
         # already encodes the entry kind — surface it so the verifier stops hedging
@@ -1498,6 +1710,13 @@ class VerificationEngine:
         verdict = _downgrade_test_only_reachability(
             verdict, finding, effective_provider, anchor.analysis_line
         )
+        # Dev/mock entrypoint gate (#162): a TP inside a standalone dev/mock
+        # binary (cmd/mockserver/...) has no production attacker path — abstain
+        # to NMD, never dismiss.
+        verdict = _downgrade_dev_mock_entrypoint(verdict, finding)
+        # Coherence gate (#162/#122): a verdict label that contradicts the
+        # reasoning's own explicit conclusion is held for review.
+        verdict = _hold_incoherent_verdict(verdict)
 
         return verdict
 
