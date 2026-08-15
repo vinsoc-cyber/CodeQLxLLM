@@ -192,8 +192,14 @@ def _downgrade_unsupported_confidence(verdict: Verdict) -> Verdict:
         + list(getattr(getattr(verdict, "finding", None), "dataflow_path", []) or [])
     )
     has_citation = bool(_CITATION_RE.search(citation_corpus))
-    has_generic = any(m in text for m in _GENERIC_PATTERN_MARKERS)
-    if has_generic and not has_citation:
+    # #150: prefer the envelope's structured self-report over the phrasing
+    # heuristic; the marker scan only backstops verdicts without signals.
+    cited_signal = (getattr(verdict, "signals", None) or {}).get("line_citations")
+    if isinstance(cited_signal, bool):
+        evidence_weak = not cited_signal
+    else:
+        evidence_weak = any(m in text for m in _GENERIC_PATTERN_MARKERS)
+    if evidence_weak and not has_citation:
         verdict.confidence = "Low"
         verdict.confidence_score = min(verdict.confidence_score, 0.3)
         verdict.reasoning = (
@@ -246,9 +252,16 @@ def _downgrade_local_prototype_pollution(verdict: Verdict) -> Verdict:
     cwes = " ".join(getattr(finding, "cwe_ids", None) or []).lower()
     if "prototype" not in rule_id and "1321" not in cwes and "1321" not in rule_id:
         return verdict
-    text = (verdict.reasoning or "").lower()
-    is_local = any(m in text for m in _LOCAL_POLLUTION_MARKERS)
-    is_global = any(m in text for m in _GLOBAL_POLLUTION_MARKERS)
+    # #150: the envelope's pollution_scope signal decides when present; the
+    # phrase markers only backstop verdicts without signals.
+    scope = (getattr(verdict, "signals", None) or {}).get("pollution_scope")
+    if scope in ("global", "instance"):
+        is_local = scope == "instance"
+        is_global = scope == "global"
+    else:
+        text = (verdict.reasoning or "").lower()
+        is_local = any(m in text for m in _LOCAL_POLLUTION_MARKERS)
+        is_global = any(m in text for m in _GLOBAL_POLLUTION_MARKERS)
     if is_local and not is_global:
         verdict.confidence = "Low"
         verdict.confidence_score = min(verdict.confidence_score, 0.3)
@@ -299,9 +312,18 @@ def _downgrade_cli_path_injection(verdict: Verdict) -> Verdict:
     cwes = set(getattr(finding, "cwe_ids", None) or [])
     if "path-injection" not in rule_id and "CWE-22" not in cwes:
         return verdict
-    text = ((verdict.reasoning or "") + " " + (verdict.data_flow or "")).lower()
-    cli_source = any(m in text for m in _CLI_PATH_SOURCE_MARKERS)
-    has_boundary = any(m in text for m in _TRUST_BOUNDARY_MARKERS)
+    # #150: the envelope's path_source / crosses_trust_boundary signals decide
+    # when present; the phrase markers only backstop verdicts without signals.
+    signals = getattr(verdict, "signals", None) or {}
+    src = signals.get("path_source")
+    boundary = signals.get("crosses_trust_boundary")
+    if src in ("cli", "external") or isinstance(boundary, bool):
+        cli_source = src == "cli"
+        has_boundary = boundary is True or src == "external"
+    else:
+        text = ((verdict.reasoning or "") + " " + (verdict.data_flow or "")).lower()
+        cli_source = any(m in text for m in _CLI_PATH_SOURCE_MARKERS)
+        has_boundary = any(m in text for m in _TRUST_BOUNDARY_MARKERS)
     if cli_source and not has_boundary:
         verdict.confidence = "Low"
         verdict.confidence_score = min(verdict.confidence_score, 0.3)
