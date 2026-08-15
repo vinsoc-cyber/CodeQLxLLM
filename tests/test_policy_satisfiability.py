@@ -157,7 +157,9 @@ def test_all_bundled_policies_offer_only_substantiable_values():
     assert sorted(load_policy_registry().families) == [
         "command_injection",
         "log_injection",
+        "loose_equality",
         "path_access",
+        "permissive_cors",
         "sql_injection",
         "xpath_injection",
     ]

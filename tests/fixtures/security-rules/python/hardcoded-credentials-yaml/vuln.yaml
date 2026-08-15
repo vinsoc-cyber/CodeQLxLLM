@@ -1,4 +1,0 @@
-db:
-  user: app
-  password: supersecret123
-  host: localhost
