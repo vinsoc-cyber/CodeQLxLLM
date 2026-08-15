@@ -44,10 +44,12 @@ _EXPECTED_PY_VERDICT_CMD = frozenset({
     "py/unsafe-deserialization", "py/url-redirection", "py/weak-cryptographic-algorithm",
     "py/weak-sensitive-data-hashing", "py/xml-bomb", "py/xss", "py/xxe",
 })
-# Python rules that STILL carry benchmark-derived "OWASP FP trap" coaching (#145).
-_EXPECTED_PY_COACHING = frozenset({
-    "py/open-redirect", "py/path-injection", "py/url-redirection",
-})
+# Python rules that STILL carry benchmark-derived "OWASP FP trap" coaching.
+# Empty since #145: the corpus-shaped enumerations were replaced with the
+# general last-assignment discipline plus the positive counterweights (a
+# constant key with a tainted VALUE still carries taint; a blocklist is not a
+# complete defense). This lint keeps the bank from regressing.
+_EXPECTED_PY_COACHING: frozenset[str] = frozenset()
 # PHP rules that STILL carry parenthetical verdict labels. php/sql-injection is
 # deliberately absent — it is covered by the CWE-89 evidence-closure policy.
 _EXPECTED_PHP_PAREN_VERDICT = frozenset({"php/regex-injection"})
