@@ -1,1 +1,0 @@
-User.find({ $where: userInput });
