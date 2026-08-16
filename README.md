@@ -437,7 +437,8 @@ Priority: **CLI args > environment variables > config file > defaults**.
 ```yaml
 provider: openai          # openai | anthropic | ollama | deepseek | gemini
 model: gpt-4o
-temperature: 0.2
+temperature: 0.0          # greedy by default; verification is seeded for reproducibility
+seed: 42                  # fixed sampling seed (null disables)
 max_tokens: 1500
 max_iterations: 3         # conversation rounds per finding
 ```

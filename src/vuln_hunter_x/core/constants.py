@@ -15,7 +15,14 @@ import multiprocessing
 SUPPORTED_PROVIDERS = ("openai", "ollama", "anthropic", "deepseek", "gemini")
 DEFAULT_LLM_PROVIDER = "openai"
 DEFAULT_LLM_MODEL = "gpt-4o"
-DEFAULT_LLM_TEMPERATURE = 0.2
+# #150: single-pass verification must be reproducible run-to-run, so the
+# default is greedy decoding plus a fixed seed (below). The self-consistency
+# voting path passes its own elevated temperature explicitly and derives
+# per-sample seeds, so it keeps the output diversity it needs.
+DEFAULT_LLM_TEMPERATURE = 0.0
+# Sent as ``seed`` on every completion where the caller doesn't override it.
+# Providers without seed support drop it via litellm.drop_params.
+DEFAULT_LLM_SEED = 42
 # 4096 was chosen after the 2026-05-15 diversevul benchmark revealed mid-
 # verdict JSON truncation at 1500 (case dvul_58f5580c074a): the LLM had
 # already enumerated the missing authorization check in its reasoning but

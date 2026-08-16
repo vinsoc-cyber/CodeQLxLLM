@@ -17,6 +17,7 @@ from vuln_hunter_x.core.constants import (
     DEFAULT_LLM_MAX_TOKENS,
     DEFAULT_LLM_MODEL,
     DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_SEED,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_MAX_FIX_ITERATIONS,
     DEFAULT_MAX_ITERATIONS,
@@ -60,6 +61,9 @@ class LLMConfig:
     provider: str = DEFAULT_LLM_PROVIDER
     model: str = DEFAULT_LLM_MODEL
     temperature: float = DEFAULT_LLM_TEMPERATURE
+    # #150: fixed sampling seed for run-to-run reproducibility. ``null`` in
+    # YAML disables seeding and restores provider entropy.
+    seed: int | None = DEFAULT_LLM_SEED
     max_tokens: int = DEFAULT_LLM_MAX_TOKENS
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     num_retries: int = 1
@@ -214,6 +218,7 @@ class Config:
             provider=data.get("provider", DEFAULT_LLM_PROVIDER),
             model=data.get("model", DEFAULT_LLM_MODEL),
             temperature=data.get("temperature", DEFAULT_LLM_TEMPERATURE),
+            seed=data.get("seed", DEFAULT_LLM_SEED),
             max_tokens=data.get("max_tokens", DEFAULT_LLM_MAX_TOKENS),
             ollama_base_url=ollama_url,
             num_retries=int(data.get("num_retries", 1)),

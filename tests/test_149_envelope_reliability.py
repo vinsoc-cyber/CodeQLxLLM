@@ -41,6 +41,7 @@ def _client_kwargs() -> LLMClient:
     c.model = "gpt-4o"
     c.provider = "openai"
     c.temperature = 0.0
+    c.seed = 42
     c.max_tokens = 4096
     c.request_timeout = 30
     c._key_pool = None
@@ -59,7 +60,7 @@ def test_complete_and_meter_extracts_usage(monkeypatch) -> None:
         usage=SimpleNamespace(total_tokens=100, prompt_tokens=80, completion_tokens=20,
                               prompt_tokens_details=SimpleNamespace(cached_tokens=5)),
     )
-    monkeypatch.setattr(c, "_build_completion_kwargs", lambda messages, temperature=None: {"messages": messages})
+    monkeypatch.setattr(c, "_build_completion_kwargs", lambda messages, temperature=None, seed=None: {"messages": messages})
     monkeypatch.setattr(c, "_completion", lambda kwargs: resp)
     monkeypatch.setattr(litellm, "completion_cost", lambda completion_response: 0.01)
     raw, delta = c._complete_and_meter([{"role": "user", "content": "x"}], 0.0)
@@ -74,7 +75,7 @@ def test_complete_and_meter_extracts_usage(monkeypatch) -> None:
 def test_complete_and_meter_max_tokens_override(monkeypatch) -> None:
     c = _client_min()
     seen: dict = {}
-    monkeypatch.setattr(c, "_build_completion_kwargs", lambda messages, temperature=None: {"max_tokens": 4096})
+    monkeypatch.setattr(c, "_build_completion_kwargs", lambda messages, temperature=None, seed=None: {"max_tokens": 4096})
     resp = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=GOOD_TP))], usage=None)
 
     def fake_completion(kwargs):
@@ -93,7 +94,7 @@ def test_retry_on_truncated_then_success(monkeypatch) -> None:
     seq = [(TRUNC, _delta(10)), (GOOD_TP, _delta(20))]
     calls: dict = {"n": 0, "max_tokens": []}
 
-    def fake(messages, temperature, max_tokens=None):
+    def fake(messages, temperature, max_tokens=None, seed=None):
         calls["n"] += 1
         calls["max_tokens"].append(max_tokens)
         return seq.pop(0)
@@ -110,7 +111,7 @@ def test_no_retry_on_healthy(monkeypatch) -> None:
     c = _client_min()
     calls = {"n": 0}
 
-    def fake(messages, temperature, max_tokens=None):
+    def fake(messages, temperature, max_tokens=None, seed=None):
         calls["n"] += 1
         return (GOOD_FP, _delta(15))
 
@@ -125,7 +126,7 @@ def test_no_retry_on_genuine_nmd(monkeypatch) -> None:
     c = _client_min()
     calls = {"n": 0}
 
-    def fake(messages, temperature, max_tokens=None):
+    def fake(messages, temperature, max_tokens=None, seed=None):
         calls["n"] += 1
         return (NMD, _delta(12))
 
@@ -139,7 +140,7 @@ def test_retry_still_truncated_keeps_abstention(monkeypatch) -> None:
     c = _client_min()
     seq = [(TRUNC, _delta(10)), (TRUNC, _delta(11))]
 
-    def fake(messages, temperature, max_tokens=None):
+    def fake(messages, temperature, max_tokens=None, seed=None):
         return seq.pop(0)
 
     monkeypatch.setattr(c, "_complete_and_meter", fake)

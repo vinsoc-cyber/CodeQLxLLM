@@ -27,6 +27,7 @@ def _client() -> LLMClient:
     c.prompt_builder = MagicMock()
     c.model = "gpt-4o"
     c.temperature = 0.0
+    c.seed = 42
     c.max_tokens = 256
     c.request_timeout = 30
     c.provider = "openai"
