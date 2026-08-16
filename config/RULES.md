@@ -85,7 +85,7 @@ All five language packs ship working queries — totals are sourced directly fro
 | `js/unrestricted-file-upload` | CWE-434 | path-problem | 7.5 | An uploaded file's name or path (from multer/formidable/busboy: req.file.filename, req.file.path, req.files[i].originalname) is written to disk via fs.writeFile / fs.createWriteStream without validating the extension against an allow-list. |
 | `js/untrusted-module-loading` | CWE-829/CWE-470 | path-problem | 9.0 | `require(s)` or `import(s)` where `s` is attacker-influenced loads arbitrary code into the running Node process, equivalent to RCE. |
 
-### Python — [codeql-custom/python/src/](codeql-custom/python/src/) (11 rules)
+### Python — [codeql-custom/python/src/](codeql-custom/python/src/) (12 rules)
 
 | `@id` | CWE | Kind | Severity | Description |
 |---|---|---|---|---|
@@ -94,6 +94,7 @@ All five language packs ship working queries — totals are sourced directly fro
 | `py/csv-formula-injection` | CWE-1236 | path-problem | 6.0 | User input written to a CSV / XLSX cell via `csv.writer`, `pandas.to_csv`, `openpyxl`, or `xlsxwriter` without escaping leading `=`/`+`/`-`/`@` characters is interpreted as a formula in Excel / LibreOffice. |
 | `py/django-raw-sql` | CWE-89 | path-problem | 9.0 | Django ORM normally parameterises queries safely, but `Model.objects.raw(s)`, `cursor.execute(s)`, `RawSQL(s)`, and `QuerySet.extra(where=[s])` accept arbitrary SQL. |
 | `py/incorrect-authorization` | CWE-639/CWE-285 | problem | 7.5 | `Model.objects.get(pk=request.GET['id'])` (or via `request.POST` / `kwargs`) without filtering by the authenticated user lets anyone fetch any user's record (CWE-639). |
+| `py/jinja-autoescape-disabled` | CWE-79 | problem | 6.1 | A Jinja2 environment or framework template setup is configured with `autoescape=False`, so every value rendered as `{{ value }}` is emitted unescaped and any user-controlled value reaching the template becomes a stored or reflected XSS sink. Framework-general: covers `jinja2.Environment(autoescape=False)`, aiohttp-jinja2 `setup(..., autoescape=False)`, and similar helpers the built-in suites miss. |
 | `py/mass-assignment` | CWE-915 | problem | 7.5 | A `ModelForm.Meta.fields = '__all__'` or DRF `ModelSerializer.Meta.fields = '__all__'` allows any field on the model — including `is_staff`, `is_superuser`, `password`, `user`, `created_by`, `pk` — to be set from the request body. |
 | `py/missing-access-control` | CWE-862 | problem | 6.5 | A view function registered to a sensitive-looking path (e.g. `/admin`, `/users/...`) that has no `@login_required`, `@permission_required`, `@user_passes_test`, FastAPI `Depends(get_current_user)`, Flask-Security `@auth_required`, etc. |
 | `py/overflow-destination` | CWE-805/CWE-806 | path-problem | 7.0 | `struct.pack_into(fmt, buffer, offset, *values)` and `ctypes.memmove(dst, src, count)` accept raw byte counts that, when sourced from a tainted protocol field without a bound against destination size, overrun the destination buffer (raises an exception or — for memmove — corrupts memory). |
@@ -135,7 +136,7 @@ OpenGrep is a Semgrep fork (LGPL 2.1) and `OpenGrepAnalyzer` is a pure subclass 
 
 **OpenGrep's registry-free rule source.** Because OpenGrep does not use the Semgrep registry, its baseline coverage comes from the vendored tree [config/opengrep-rules/](opengrep-rules/) (`${LANG}` → `config/opengrep-rules/python`, etc.), referenced by every profile's `opengrep_configs`. Under `full` it additionally layers the custom `config/semgrep-custom/${LANG}.yaml` rules above. The registry `language_specific_configs` (`p/python`, `p/gosec`, …) are appended to **Semgrep only** — `_expand_per_repo_configs(..., engine="opengrep")` in [../src/vuln_hunter_x/cli/commands.py](../src/vuln_hunter_x/cli/commands.py) skips them. The vendored rules are LGPL-2.1 + Commons Clause; see [opengrep-rules/NOTICE.md](opengrep-rules/NOTICE.md). Refresh the snapshot with `scripts/refresh_opengrep_rules.sh`.
 <!-- sg_tables_begin -->
-### Python — [semgrep-custom/python.yaml](semgrep-custom/python.yaml) (22 rules)
+### Python — [semgrep-custom/python.yaml](semgrep-custom/python.yaml) (27 rules)
 
 | Rule id | CWE | Severity | Message |
 |---|---|---|---|
@@ -161,6 +162,11 @@ OpenGrep is a Semgrep fork (LGPL 2.1) and `OpenGrepAnalyzer` is a pure subclass 
 | `vulnhunterx.python.template-injection` | CWE-1336/CWE-917 | ERROR | A Jinja2 template is compiled from a non-literal string — SSTI escalates to RCE via gadget expressions. |
 | `vulnhunterx.python.nosql-injection` | CWE-943 | ERROR | A MongoDB query uses the $where operator with a non-literal value (server-side JS evaluation). |
 | `vulnhunterx.python.xxe` | CWE-611 | ERROR | An lxml XMLParser is created with resolve_entities=True / no_network=False, enabling XXE file disclosure and SSRF. |
+| `vulnhunterx.python.template-autoescape-disabled` | CWE-79 | ERROR | Jinja2 autoescape is explicitly disabled (autoescape=False), so any user-controlled value rendered in a template is emitted unescaped, enabling stored/reflected XSS. |
+| `vulnhunterx.python.aiohttp-insecure-session-cookie` | CWE-1004/CWE-614 | WARNING | An aiohttp_session storage sets httponly=False (cookie readable from JavaScript, session theft via XSS) or secure=False (cookie sent over plaintext HTTP). |
+| `vulnhunterx.python.aiohttp-debug-enabled` | CWE-489 | WARNING | aiohttp web.Application(debug=True) enables debug mode, surfacing verbose diagnostics and disabling some safety checks. |
+| `vulnhunterx.python.hardcoded-credentials-yaml` | CWE-798 | WARNING | A credential is hardcoded as a literal in a YAML config file — checked-in secrets are exposed to anyone with repo access and persist in version history. |
+| `vulnhunterx.python.hardcoded-credentials-env-ini` | CWE-798 | WARNING | A credential is hardcoded as a literal in a .env/.ini/.cfg/.conf/.properties config file, with the same version-history exposure. |
 
 ### JavaScript / TypeScript — [semgrep-custom/javascript.yaml](semgrep-custom/javascript.yaml) (14 rules)
 

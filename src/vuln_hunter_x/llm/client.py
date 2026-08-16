@@ -471,6 +471,103 @@ class LLMClient:
                 raw, parsed = raw2, parsed2
         return raw, parsed, delta
 
+    @staticmethod
+    def _usable_prefetch(prefetched_context: dict[str, str] | None) -> dict[str, str]:
+        """Prefetched entries that actually carry code, in request order.
+
+        A provider signals a miss in-band with a ``[No ...]`` / ``[Unknown ...]``
+        placeholder instead of omitting the key, so misses must be filtered out
+        before the text is shown to the model *and* before it is recorded as
+        fulfilled. Both call sites share this one predicate deliberately: if they
+        drift apart, context gets appended to the prompt without being marked
+        fulfilled and the model then re-requests it every turn.
+        """
+        if not prefetched_context:
+            return {}
+        return {
+            req: code
+            for req, code in prefetched_context.items()
+            if "[No " not in code and "[Unknown" not in code
+        }
+
+    def _build_initial_messages(
+        self,
+        finding: Finding,
+        context: str,
+        questions: GuidedQuestions,
+        func_name: str,
+        context_start_line: int,
+        prefetched_context: dict[str, str] | None,
+        decision_strategy: DecisionStrategy | None,
+    ) -> tuple[list[dict], str, str]:
+        """Assemble the system + user messages for the opening turn.
+
+        Returns ``(messages, user_prompt, sys_prompt)`` — the two prompts come
+        back alongside the message list because the verbose and log-file paths
+        echo them verbatim.
+
+        The policy evidence-closure path (a decision strategy is supplied) uses
+        assessment-mode prompts: the fact-slot assessment is the sole response
+        contract, so the free-text verdict framing is dropped from both turns.
+        """
+        assessment_mode = decision_strategy is not None
+        user_prompt = self.prompt_builder.build_user_prompt(
+            finding, context, questions, func_name, context_start_line,
+            assessment_mode=assessment_mode,
+        )
+
+        usable = self._usable_prefetch(prefetched_context)
+        if usable:
+            user_prompt += "\n\n## Pre-fetched Additional Context\n\n" + "\n\n".join(
+                f"### {req}\n```\n{code}\n```" for req, code in usable.items()
+            )
+
+        # Policy path: append the strategy's fact-slot assessment instructions so
+        # the model returns the structured assessment on the first turn.
+        if decision_strategy is not None:
+            extra = getattr(decision_strategy, "initial_instructions", lambda: None)()
+            if extra:
+                user_prompt += "\n\n" + extra
+
+        sys_prompt = self.prompt_builder.get_system_prompt(
+            tool_name=finding.tool or "static analysis",
+            lang=finding.lang,
+            assessment_mode=assessment_mode,
+        )
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        return messages, user_prompt, sys_prompt
+
+    @staticmethod
+    def _print_system_prompt(sys_prompt: str) -> None:
+        """Echo the system prompt for verbose runs, truncated past 1000 chars."""
+        print("\n    === SYSTEM PROMPT ===")
+        if len(sys_prompt) > 1000:
+            print(f"    [System prompt: {len(sys_prompt)} chars, showing first 1000...]")
+            print(f"    {sys_prompt[:1000]}...")
+        else:
+            print(f"    {sys_prompt}")
+        print("    === END SYSTEM PROMPT ===\n")
+
+    def _log_initial_prompt(
+        self, log_file: Any, finding: Finding, func_name: str, user_prompt: str
+    ) -> None:
+        """Write the finding header and opening prompts to the conversation log.
+
+        Note this logs ``prompt_builder.system_prompt`` (the raw template), not
+        the rendered per-finding system prompt — preserved as-is.
+        """
+        log_file.write(f"## Finding: {finding.rule_id}\n\n")
+        log_file.write(f"- **File**: `{finding.file}:{finding.start_line}`\n")
+        log_file.write(f"- **Message**: {finding.message}\n")
+        log_file.write(f"- **Function**: `{func_name}`\n\n")
+        log_file.write(
+            f"### System Prompt\n\n```\n{self.prompt_builder.system_prompt}\n```\n\n"
+        )
+        log_file.write(f"### User Prompt\n\n```\n{user_prompt}\n```\n\n")
+
     def analyze(
         self,
         finding: Finding,
@@ -513,64 +610,15 @@ class LLMClient:
         Returns:
             Verdict with the analysis result (includes confidence_score 0.0-1.0)
         """
-        # The policy evidence-closure path (a decision strategy is supplied) uses
-        # assessment-mode prompts: the fact-slot assessment is the sole response
-        # contract, so the free-text verdict framing is dropped from both turns.
-        assessment_mode = decision_strategy is not None
-        user_prompt = self.prompt_builder.build_user_prompt(
+        messages, user_prompt, sys_prompt = self._build_initial_messages(
             finding, context, questions, func_name, context_start_line,
-            assessment_mode=assessment_mode,
+            prefetched_context, decision_strategy,
         )
 
-        # Append pre-fetched context to initial prompt
-        if prefetched_context:
-            prefetch_parts = []
-            for req, code in prefetched_context.items():
-                if "[No " not in code and "[Unknown" not in code:
-                    prefetch_parts.append(f"### {req}\n```\n{code}\n```")
-            if prefetch_parts:
-                user_prompt += (
-                    "\n\n## Pre-fetched Additional Context\n\n"
-                    + "\n\n".join(prefetch_parts)
-                )
-
-        # Policy path: append the strategy's fact-slot assessment instructions so
-        # the model returns the structured assessment on the first turn.
-        if decision_strategy is not None:
-            extra = getattr(decision_strategy, "initial_instructions", lambda: None)()
-            if extra:
-                user_prompt += "\n\n" + extra
-
-        sys_prompt = self.prompt_builder.get_system_prompt(
-            tool_name=finding.tool or "static analysis",
-            lang=finding.lang,
-            assessment_mode=assessment_mode,
-        )
-        messages = [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        # Print initial prompts in verbose mode
         if verbose:
-            print("\n    === SYSTEM PROMPT ===")
-            if len(sys_prompt) > 1000:
-                print(f"    [System prompt: {len(sys_prompt)} chars, showing first 1000...]")
-                print(f"    {sys_prompt[:1000]}...")
-            else:
-                print(f"    {sys_prompt}")
-            print("    === END SYSTEM PROMPT ===\n")
-
-        # Log initial prompt
+            self._print_system_prompt(sys_prompt)
         if log_file:
-            log_file.write(f"## Finding: {finding.rule_id}\n\n")
-            log_file.write(f"- **File**: `{finding.file}:{finding.start_line}`\n")
-            log_file.write(f"- **Message**: {finding.message}\n")
-            log_file.write(f"- **Function**: `{func_name}`\n\n")
-            log_file.write(
-                f"### System Prompt\n\n```\n{self.prompt_builder.system_prompt}\n```\n\n"
-            )
-            log_file.write(f"### User Prompt\n\n```\n{user_prompt}\n```\n\n")
+            self._log_initial_prompt(log_file, finding, func_name, user_prompt)
 
         start_time = time.time()
         iterations = 0
@@ -580,12 +628,9 @@ class LLMClient:
         total_output_tokens: int = 0
         total_cached_input_tokens: int = 0
         total_cost_usd: float = 0.0
-        fulfilled_context: set[str] = set()  # Track already-provided context requests
-        # Mark pre-fetched context as already fulfilled
-        if prefetched_context:
-            for req, code in prefetched_context.items():
-                if "[No " not in code and "[Unknown" not in code:
-                    fulfilled_context.add(req)
+        # Pre-fetched context counts as already provided, so the multi-turn loop
+        # does not re-request what the opening prompt already carries.
+        fulfilled_context: set[str] = set(self._usable_prefetch(prefetched_context))
 
         while iterations < max_iterations:
             iterations += 1

@@ -341,3 +341,114 @@ class TestLLMClientKwargs:
         kwargs = client._build_completion_kwargs([{"role": "user", "content": "ok"}])
 
         assert kwargs["api_base"] == "https://proxy.example/gemini"
+
+
+class TestAnalyzeForceDecisionTail:
+    """Characterization tests for the max-iterations tail of analyze().
+
+    This block (the `if force_decision:` branch and the "Needs More Data"
+    fallback after it) had zero test coverage while deciding the final verdict
+    for every finding that exhausts its iteration budget. These tests pin the
+    observable contract so the surrounding refactor is behaviour-preserving.
+
+    `max_iterations=0` skips the conversation loop entirely and lands directly
+    on the tail, which keeps the setup free of loop/context-expansion plumbing.
+    """
+
+    def setup_method(self):
+        self.client = LLMClient(provider="openai", model="gpt-4o")
+
+    def test_force_decision_returns_forced_verdict(self, finding, questions, monkeypatch):
+        """A successful forced turn supplies the verdict, and counts as an iteration."""
+        captured: dict = {}
+
+        def fake_force_turn(messages, all_raw, *args, **kwargs):
+            captured["messages"] = list(messages)
+            parsed = {
+                "verdict": "True Positive",
+                "confidence": "High",
+                "reasoning": "forced",
+                "answers": ["a1"],
+                "confidence_score": 0.75,
+            }
+            return parsed, "raw", 11, 0.5, 7, 4, 1
+
+        monkeypatch.setattr(self.client, "_force_decision_turn", fake_force_turn)
+
+        verdict = self.client.analyze(
+            finding=finding, context="code", questions=questions, func_name="f",
+            max_iterations=0, force_decision=True, quiet=True,
+        )
+
+        assert verdict.verdict == "True Positive"
+        assert verdict.confidence == "High"
+        assert verdict.reasoning == "forced"
+        assert verdict.confidence_score == 0.75
+        assert verdict.iterations == 1
+        assert verdict.tokens_used == 11
+        assert verdict.cost_usd == 0.5
+        assert verdict.input_tokens == 7
+        assert verdict.output_tokens == 4
+        assert verdict.cached_input_tokens == 1
+        # An empty assistant turn is appended when no prior response exists.
+        assert captured["messages"][-1] == {"role": "assistant", "content": ""}
+
+    def test_force_decision_applies_defaults_for_missing_fields(
+        self, finding, questions, monkeypatch
+    ):
+        """A forced turn that parses to an empty dict falls back to FP / Low / 0.3."""
+        monkeypatch.setattr(
+            self.client,
+            "_force_decision_turn",
+            lambda *a, **k: ({}, "raw", 0, 0.0, 0, 0, 0),
+        )
+
+        verdict = self.client.analyze(
+            finding=finding, context="code", questions=questions, func_name="f",
+            max_iterations=0, force_decision=True, quiet=True,
+        )
+
+        assert verdict.verdict == "False Positive"
+        assert verdict.confidence == "Low"
+        assert verdict.reasoning == "Forced decision after max iterations"
+        assert verdict.confidence_score == 0.3
+        assert verdict.answers == []
+
+    def test_force_decision_failure_falls_back_to_needs_more_data(
+        self, finding, questions, monkeypatch
+    ):
+        """A raising forced turn must degrade to the abstention, not propagate."""
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("backend down")
+
+        monkeypatch.setattr(self.client, "_force_decision_turn", boom)
+
+        verdict = self.client.analyze(
+            finding=finding, context="code", questions=questions, func_name="f",
+            max_iterations=0, force_decision=True, quiet=True,
+        )
+
+        assert verdict.verdict == "Needs More Data"
+        assert verdict.confidence == "Low"
+        assert verdict.confidence_score == 0.0
+        assert "Max iterations (0) reached" in verdict.reasoning
+
+    def test_force_decision_disabled_skips_forced_turn(self, finding, questions, monkeypatch):
+        """With force_decision=False the forced turn must not be attempted at all."""
+        calls: list = []
+        monkeypatch.setattr(
+            self.client,
+            "_force_decision_turn",
+            lambda *a, **k: calls.append(1) or ({}, "r", 0, 0.0, 0, 0, 0),
+        )
+
+        verdict = self.client.analyze(
+            finding=finding, context="code", questions=questions, func_name="f",
+            max_iterations=0, force_decision=False, quiet=True,
+        )
+
+        assert calls == []
+        assert verdict.verdict == "Needs More Data"
+        assert verdict.confidence_score == 0.0
+        assert verdict.iterations == 0

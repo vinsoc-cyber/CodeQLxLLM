@@ -49,7 +49,7 @@ The **Vulnhalla** methodology forces the LLM to:
 | **Languages** | C, C++, Python, JavaScript, PHP, Java, Go, C# |
 | **SAST engines** | CodeQL, Semgrep (live `registry.semgrep.dev` packs), OpenGrep (registry-free, runs the vendored offline [config/opengrep-rules/](config/opengrep-rules/)) — `--tool codeql\|semgrep\|opengrep\|both\|all` |
 | **Security rule profiles** | `standard` → `extended` → `maximum` → `extended-registry` → `full` (see [config/RULES.md](config/RULES.md)) |
-| **Guided questions** | 394 rule-specific templates across 7 per-language banks plus a fallback |
+| **Guided questions** | 399 rule-specific templates across 7 per-language banks plus a fallback |
 | **LLM providers** | OpenAI, Anthropic, Gemini, DeepSeek, Ollama (local or [Ollama Cloud](https://ollama.com)) — via [LiteLLM](https://github.com/BerriAI/litellm) |
 | **Multi-turn verification** | Dynamic context expansion (callers, structs, globals, macros, free-sites) |
 | **Inputs** | Git URL, local directory, or batch list (`repos.yaml`) |
@@ -101,6 +101,14 @@ python examples/pipeline_python.py
 | `pipeline_php.py` | PHP | monolog | dvwa |
 | `pipeline_go.py` | Go | gin | govwa |
 | `pipeline_csharp.py` | C# | newtonsoft-json | webgoat-net |
+
+Three further scripts live alongside them:
+
+| Script | Purpose |
+|---|---|
+| `basic_usage.py` | Smallest Python-API example — verify findings from an existing SARIF file |
+| `run_all_pipelines.py` | Batch runner — executes the full pipeline for every repo in `repos.yaml` |
+| `pipeline_zlib.py` | Single-target C walkthrough, without the real-world/vulnerable pairing |
 
 ### One-shot scan (or guided wizard)
 
@@ -398,12 +406,12 @@ MarkdownReportGenerator().generate(
 | Rule profiles | 5 (`standard` → `full`) |
 | Security categories | 12 |
 | CWE entries in routing map | 124 |
-| Custom CodeQL queries | 64 (C/C++ 16, Java 10, JavaScript 14, Python 11, Go 8, C# 5) |
-| Custom Semgrep rules | 103 (Python 22, JavaScript 14, Java 16, Go 19, PHP 14, C/C++ 4, C# 14) |
+| Custom CodeQL queries | 65 (C/C++ 16, JavaScript 14, Python 12, Java 10, Go 8, C# 5) |
+| Custom Semgrep rules | 108 (Python 27, Go 19, Java 16, JavaScript 14, PHP 14, C# 14, C/C++ 4) |
 | Built-in CodeQL suites | `security-extended` (~200), `security-and-quality` (~400) |
 | Built-in Semgrep universal packs | 8 |
 | Built-in Semgrep per-language packs | 10 (django, flask, nodejs, gosec, …) |
-| Guided-question templates | 394 across 7 per-language banks + 1 fallback |
+| Guided-question templates | 399 across 7 per-language banks + 1 fallback |
 
 Coverage growth from `--profile standard` to `--profile full` is roughly **5×–10×** more rules per scan. Per-language registry packs (`p/django`, `p/gosec`, …) are only applied to matching repos so cross-language scans aren't polluted.
 
@@ -470,12 +478,13 @@ Rule-specific question banks that force the LLM to reason step-by-step.
 
 | File | Language | Rule sets |
 |---|---|---|
-| `cpp_questions.yaml` | C/C++ | 59 |
-| `python_questions.yaml` | Python | 56 |
-| `javascript_questions.yaml` | JavaScript / TypeScript | 51 |
-| `go_questions.yaml` | Go | 50 |
-| `java_questions.yaml` | Java | 50 |
-| `php_questions.yaml` | PHP | 50 |
+| `python_questions.yaml` | Python | 67 |
+| `cpp_questions.yaml` | C/C++ | 62 |
+| `java_questions.yaml` | Java | 59 |
+| `javascript_questions.yaml` | JavaScript / TypeScript | 57 |
+| `php_questions.yaml` | PHP | 55 |
+| `go_questions.yaml` | Go | 54 |
+| `cs_questions.yaml` | C# | 45 |
 | `default_questions.yaml` | Fallback | 1 |
 
 The verifier matches each SARIF `ruleId` in three tiers — exact match → prefix/normalized → CWE map — falling back to `default_questions.yaml` only when none hits. See [config/RULES.md § 7](config/RULES.md#7-guided-question-routing).
@@ -511,7 +520,7 @@ VulnHunterX/
 │   └── repos.yaml              # Repository definitions
 ├── benchmarks/        # Evaluation framework — see benchmarks/README.md
 ├── examples/          # Per-language pipeline scripts
-├── scripts/           # audit_rule_coverage.py, etc.
+├── scripts/           # audit_rule_coverage.py, refresh_opengrep_rules.sh, prepare_release.sh
 ├── tests/
 └── output/
     └── <lang>/<repo>/
