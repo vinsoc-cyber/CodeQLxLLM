@@ -428,16 +428,8 @@ def build_sanitized(
         repo_src, src_copy, ignore=shutil.ignore_patterns(".git", "*.pyc", "__pycache__")
     )
 
-    # Inject --prefix for install step (autotools and CMake)
-    install_dir = out_dir / "install"
-    install_dir.mkdir(parents=True, exist_ok=True)
-    install_cmd = _inject_install_step(build_cmd, install_dir)
-
-    ok, msg = run_sanitized_build(src_copy, install_cmd, env, timeout=timeout)
+    ok, msg = run_sanitized_build(src_copy, build_cmd, env, timeout=timeout)
     if not ok:
-        suggestions = suggest_missing_deps(msg)
-        if suggestions:
-            msg += f"\n\nSuggested missing packages: {', '.join(suggestions)}"
         return False, msg, None
 
     write_manifest(src_copy, manifest_path, src_copy)

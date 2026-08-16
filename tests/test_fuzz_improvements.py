@@ -378,8 +378,9 @@ class TestGetTargetContextEnriched:
 def test_make_llm_fix_fn_bounds_completion_with_timeout(monkeypatch):
     """#131: the fuzz driver-fix completer must pass an explicit timeout so a
     stalled backend can't wedge the fix loop."""
-    import sys
     from types import SimpleNamespace
+
+    import litellm
 
     captured: dict = {}
 
@@ -389,7 +390,13 @@ def test_make_llm_fix_fn_bounds_completion_with_timeout(monkeypatch):
             choices=[{"message": {"content": "```cpp\nint main(){}\n```"}}]
         )
 
-    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(completion=fake_completion))
+    # Patch the attribute on the real litellm module rather than swapping
+    # sys.modules: llm/completion.py binds `import litellm` at module import
+    # time, so a sys.modules swap is inert once that module is already loaded
+    # (and litellm's own internals still resolve `import litellm` back to the
+    # stub, exploding on unrelated attributes). Patching the attribute works
+    # regardless of import order.
+    monkeypatch.setattr(litellm, "completion", fake_completion)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
 
@@ -404,8 +411,9 @@ def test_make_llm_fix_fn_bounds_completion_with_timeout(monkeypatch):
 def test_make_llm_fix_fn_gemini_routes_natively(monkeypatch):
     """Gemini gets the gemini/ prefix, an explicitly injected key (GEMINI wins
     over GOOGLE), and no OpenAI-compat kwargs."""
-    import sys
     from types import SimpleNamespace
+
+    import litellm
 
     captured: dict = {}
 
@@ -415,7 +423,13 @@ def test_make_llm_fix_fn_gemini_routes_natively(monkeypatch):
             choices=[{"message": {"content": "```cpp\nint main(){}\n```"}}]
         )
 
-    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(completion=fake_completion))
+    # Patch the attribute on the real litellm module rather than swapping
+    # sys.modules: llm/completion.py binds `import litellm` at module import
+    # time, so a sys.modules swap is inert once that module is already loaded
+    # (and litellm's own internals still resolve `import litellm` back to the
+    # stub, exploding on unrelated attributes). Patching the attribute works
+    # regardless of import order.
+    monkeypatch.setattr(litellm, "completion", fake_completion)
     monkeypatch.delenv("GEMINI_API_KEYS", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key")

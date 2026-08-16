@@ -84,7 +84,13 @@ def test_diversevul_adapter_unwraps_list_cwe():
         "project": "p",
         "commit_id": "c",
     }
-    entry = adapter._record_to_entry(record, seen_hashes=set(), cwe_filter=None)
+    entry = adapter._record_to_entry(
+        record,
+        seen_hashes=set(),
+        cwe_filter=None,
+        include_unknown_cwe=True,
+        dropped_unknown_cwe=[0],
+    )
     assert entry is not None
     assert entry.cwe_id == "CWE-119"
     assert entry.metadata["all_cwes"] == ["CWE-119", "CWE-787"]
@@ -97,7 +103,13 @@ def test_diversevul_adapter_synthesises_cpp_rule_id():
 
     adapter = DiverseVulAdapter("/tmp/ignored")
     record = {"func": "void f(){}", "target": 1, "cwe": ["CWE-416"]}
-    entry = adapter._record_to_entry(record, seen_hashes=set(), cwe_filter=None)
+    entry = adapter._record_to_entry(
+        record,
+        seen_hashes=set(),
+        cwe_filter=None,
+        include_unknown_cwe=True,
+        dropped_unknown_cwe=[0],
+    )
     assert entry is not None
     assert entry.rule_id.startswith("cpp/") or entry.rule_id.startswith("c/"), entry.rule_id
 
@@ -109,7 +121,13 @@ def test_diversevul_adapter_handles_empty_cwe():
 
     adapter = DiverseVulAdapter("/tmp/ignored")
     record = {"func": "void f(){}", "target": 1, "cwe": []}
-    entry = adapter._record_to_entry(record, seen_hashes=set(), cwe_filter=None)
+    entry = adapter._record_to_entry(
+        record,
+        seen_hashes=set(),
+        cwe_filter=None,
+        include_unknown_cwe=True,
+        dropped_unknown_cwe=[0],
+    )
     assert entry is not None
     assert entry.cwe_id == "Unknown"
     assert entry.rule_id == ""
