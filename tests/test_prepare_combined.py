@@ -603,8 +603,9 @@ class TestCloneAndCreateDbPreFlight:
 def test_ask_llm_for_build_help_bounds_completion_with_timeout(monkeypatch):
     """#131: the CodeQL build-help request must pass an explicit timeout so a
     stalled backend can't hang database prep."""
-    import sys
     from types import SimpleNamespace
+
+    import litellm
 
     captured: dict = {}
 
@@ -614,7 +615,10 @@ def test_ask_llm_for_build_help_bounds_completion_with_timeout(monkeypatch):
             choices=[SimpleNamespace(message=SimpleNamespace(content="do X"))]
         )
 
-    monkeypatch.setitem(sys.modules, "litellm", SimpleNamespace(completion=fake_completion))
+    # Patch the attribute on the real litellm module rather than swapping
+    # sys.modules: llm/completion.py binds `import litellm` at module import
+    # time, so a sys.modules swap is inert once that module is already loaded.
+    monkeypatch.setattr(litellm, "completion", fake_completion)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)

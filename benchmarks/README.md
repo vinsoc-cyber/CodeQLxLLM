@@ -1,0 +1,565 @@
+# VulnHunterX Benchmarks
+
+Standalone benchmark framework comparing VulnHunterX against baselines on six ground-truth datasets. Runs as plain Python scripts from the repo root — no separate installation.
+
+---
+
+## Table of Contents
+
+- [What it does](#what-it-does)
+- [Approaches](#approaches)
+- [Datasets](#datasets)
+- [Prerequisites](#prerequisites)
+- [Quick Start](#quick-start)
+- [Per-Dataset Playbooks](#per-dataset-playbooks)
+- [CLI Reference](#cli-reference)
+- [Metrics](#metrics)
+- [Output Structure](#output-structure)
+- [Interpreting Results](#interpreting-results)
+- [Resuming Interrupted Runs](#resuming-interrupted-runs)
+- [Adding Datasets or Approaches](#adding-datasets-or-approaches)
+
+---
+
+## What it does
+
+For each (dataset, approach) pair the harness produces a verdict per entry, scores it against ground truth, and emits precision / recall / F1, FP-reduction rate, NMD rate, mean tokens-per-finding, p95 latency, and confidence-calibration tables. Results are checkpointed per entry and can be resumed after Ctrl+C or process death.
+
+The design rationale, papers reviewed, and dataset selection criteria are in [RESEARCH.md](RESEARCH.md).
+
+---
+
+## Approaches
+
+| Approach           | What it does                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `raw-sast`         | Every SAST finding is treated as TP, no LLM call. Establishes upper-bound recall and reveals the underlying FP rate.  |
+| `vulnhunterx`      | Full pipeline: rule-specific guided questions + answer-before-verdict + multi-turn context expansion. Also serves as the ablation's *specific* arm. |
+| `ablation`         | Meta-name for the guided-question ablation. Expands to `vulnhunterx` + `ablation-generic` + `ablation-zero`, holding the whole pipeline constant and varying **only** the guided questions. The *specific* arm **is** `vulnhunterx` (reused, not re-run) — so there is no duplicate LLM pass. |
+| `ablation-generic` | The `vulnhunterx` pipeline with only `default_questions.yaml` (generic fallback questions).                           |
+| `ablation-zero`    | The `vulnhunterx` pipeline with no guided questions (zero-shot).                                                      |
+| `all`              | Every registered approach: `raw-sast vulnhunterx ablation-generic ablation-zero` — i.e. baselines + the full guided-question ablation. |
+
+---
+
+## Datasets
+
+Two tracks (see [RESEARCH.md § 6](RESEARCH.md#6-dataset-selection-guide--what-to-benchmark-on-and-why)).
+**Track 1 — FP-reduction** (finding-shaped: real SAST alert + TP/FP label):
+
+| Dataset                  | Size           | Language       | Ground Truth                                                                                |
+| ------------------------ | -------------- | -------------- | ------------------------------------------------------------------------------------------- |
+| **OpenVuln / ZeroFalse** | 58 alerts      | Java           | Real **CodeQL alerts** with human TP/FP labels, 7 projects — MIT (best real-world fit)      |
+| **SecLLMHolmes**         | ~228 scenarios | C/C++, Python  | Handcrafted bad/good pairs, 8 CWE classes (MIT)                                             |
+| **Juliet C/C++ 1.3.1**   | 64K cases      | C, C++         | NIST synthetic `bad()`/`good()` function pairs, ~180 CWEs                                   |
+| **OWASP BenchmarkJava**  | ~2,740 cases   | Java           | `expectedresults-1.2.csv` (TP/FP per case, 11 CWE categories) — GPL-2.0                     |
+| **OWASP BenchmarkPython**| ~1,230 cases   | Python         | `expectedresults-0.1.csv` — GPL-3.0                                                         |
+| **RealVuln Benchmark**   | 796 findings   | Python         | Real CVE TPs + curated FP traps across 26 web-framework repos — MIT                         |
+| **security-rules**       | 14 pairs       | Go/PHP/JS/Py   | In-repo `vuln`/`clean` fixtures for this project's custom rules — no download                |
+
+**Track 2 — detection** (whole-function vuln labels; recall-only, *not* in the headline/model-matrix):
+
+| Dataset                  | Size           | Language       | Ground Truth                                                                                |
+| ------------------------ | -------------- | -------------- | ------------------------------------------------------------------------------------------- |
+| **DiverseVul** †         | 349K functions | C, C++         | CVE-backed function labels (~60% label accuracy — see RESEARCH.md §6.2)                      |
+
+† DiverseVul/CVEfixes are function-level detection sets: no real SAST alert, `target=0`≠SAST-FP, and labels are noisy. They measure recall/TP-preservation, **not** FP-reduction. The report marks them with `†` and excludes them from the model matrix.
+
+OWASP/OpenVuln/RealVuln suites are cloned at runtime under `benchmarks/datasets/` rather than vendored; project code stays MIT and any GPL applies only to the cloned corpora. See [RESEARCH.md § 6](RESEARCH.md#6-dataset-selection-guide--what-to-benchmark-on-and-why) for the full selection rationale and the SastBench → RealVuln substitution.
+
+---
+
+## Prerequisites
+
+- Python 3.12+ with VulnHunterX installed (`uv pip install -e .`)
+- For LLM approaches: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or a local Ollama instance
+- For chart generation: `uv pip install -e ".[benchmark]"`
+- Disk: ~650 MB for SecLLMHolmes + Juliet, ~2 GB more for DiverseVul, ~50 MB each for OWASP/RealVuln
+- CodeQL CLI (optional; only needed for Juliet "full" mode)
+
+---
+
+## Quick Start
+
+### 1. Smoke test — no LLM, no dataset download
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --dataset secllmholmes --approach raw-sast --limit 10
+# Uses the 10-entry fixture under benchmarks/fixtures/, completes in <5 s.
+```
+
+### 2. Dry-run — mock LLM, exercises every code path
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --dataset secllmholmes --approach all --limit 20 --dry-run
+```
+
+### 3. Download datasets
+
+```bash
+python benchmarks/scripts/setup_datasets.py --list             # list available
+python benchmarks/scripts/setup_datasets.py --dataset secllmholmes   # single (~50 MB)
+python benchmarks/scripts/setup_datasets.py --dataset all      # everything (~3 GB)
+```
+
+### 4. Small real run
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --dataset secllmholmes --approach all \
+    --model gpt-4.1 --limit 50
+```
+
+### 5. Generate the report
+
+```bash
+python benchmarks/scripts/generate_report.py \
+    --run-dir benchmarks/results/<timestamp>
+# Add --charts to render precision/recall plots (requires matplotlib).
+```
+
+### 6. Full benchmark
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --dataset all --approach all --model gpt-5
+```
+
+### 7. Iteration sweep (measure multi-turn contribution)
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --dataset secllmholmes --approach vulnhunterx \
+    --model gpt-4.1 --iteration-sweep
+# Runs at max_iterations = 1, 2, 3.
+```
+
+### 8. Resumable run — survive Ctrl+C
+
+```bash
+# Start with an explicit named directory:
+python benchmarks/scripts/run_benchmark.py \
+    --dataset all --approach all --model gpt-5 \
+    --run-dir benchmarks/results/my_run
+
+# Resume after an interruption:
+python benchmarks/scripts/run_benchmark.py \
+    --dataset all --approach all --model gpt-5 \
+    --run-dir benchmarks/results/my_run --resume
+```
+
+### Dataset size tiers
+
+Starting points for `--limit` and dataset-specific flags:
+
+| Dataset    | Small                        | Medium                        | Large                              |
+| ---------- | ---------------------------- | ----------------------------- | ---------------------------------- |
+| SecLLMHolmes | `--limit 20`               | `--limit 100`                 | `--limit 0` (all, ~228)            |
+| Juliet     | `--juliet-per-cwe 5` (~40)   | `--juliet-per-cwe 20` (~160)  | `--juliet-per-cwe 0` (~64K)        |
+| DiverseVul | `--limit 500`                | `--limit 5000`                | `--limit 0` (~349K)                |
+
+For runs over a few thousand entries, use a local Ollama model — commercial-API cost grows quickly. See [RESEARCH.md § Token / Cost Reference](RESEARCH.md#token-and-cost-reference).
+
+### Parallel evaluation (`-j, --jobs`)
+
+Benchmark runs are I/O-bound on the LLM provider, so the runner evaluates entries concurrently with a `ThreadPoolExecutor`. Default `--jobs 4` typically yields ~3–4× wall-clock speedup over sequential mode.
+
+```bash
+# Default — 4 entries in flight at a time
+python benchmarks/scripts/run_benchmark.py --dataset owasp --approach vulnhunterx
+
+# Push harder on high-tier API keys or a self-hosted Ollama
+python benchmarks/scripts/run_benchmark.py --dataset diversevul --approach vulnhunterx -j 16
+
+# Strict sequential for debugging (clean stack traces, deterministic logs)
+python benchmarks/scripts/run_benchmark.py --dataset secllmholmes --approach vulnhunterx -j 1
+```
+
+Notes:
+- The `vulnhunterx` approach pins the inner `VerificationEngine` to `jobs=1` so only the outer benchmark layer fans out — no hidden double-parallelism.
+- Per-entry order in `findings.jsonl` and the per-approach results JSON is preserved (entries finish concurrently but slot into their input index), so resume semantics are unaffected.
+- On free/low-tier OpenAI keys, `-j 4` can surface 429 rate-limit errors; drop to `-j 1` or `-j 2` if you see those.
+- Progress display and per-entry log lines are serialized — output still reads top-to-bottom.
+
+### Multiple Ollama Cloud keys (`OLLAMA_API_KEYS`)
+
+To scale `--jobs` past a single key's RPM ceiling, set a comma-separated pool. The LLM client round-robins across keys and parks any key that returns 429 for `Retry-After` seconds (60s fallback) before trying it again.
+
+```bash
+export OLLAMA_API_KEYS="key1,key2,key3"
+python benchmarks/scripts/run_benchmark.py \
+    --dataset secllmholmes --approach vulnhunterx \
+    --model ollama/qwen3-coder-next:cloud --jobs 12
+```
+
+A single `OLLAMA_API_KEY=...` still works unchanged — the pool only activates with 2+ keys. The mechanism applies to every `LLMClient` caller (verify CLI, benchmark runner), not just benchmarks.
+
+---
+
+## Model Comparison Matrix (Ollama / GPT / DeepSeek)
+
+`run_benchmark.py` evaluates one model per run. To compare models head-to-head on
+the **same** dataset/approach, use the matrix runner — it launches one
+`run_benchmark.py` subprocess per model (each with an isolated credential env, so
+DeepSeek's `OPENAI_BASE_URL` doesn't bleed into a plain-OpenAI run) and writes a
+`matrix.json`. Then `compare_models.py` aggregates them into one `COMPARISON.md`.
+
+The matrix is defined in `config/models.yaml`. Copy the tracked template
+[config/models.yaml.example](config/models.yaml.example) to `config/models.yaml`
+(gitignored) and edit it to add models or point at a per-model `.env`; the runner
+prefers `models.yaml` and falls back to the `.example`. For each model's `env:`,
+copy the matching `config/.env.<name>.example` to a repo-root `.env.<name>` and
+fill in real keys. Default tiers: `gpt-4.1` / `gpt-5` (GPT), `deepseek-v4-flash` /
+`deepseek-v4-pro` (DeepSeek), `ollama/qwen3-coder:480b-cloud` (bulk).
+
+```bash
+# Dry-run the whole matrix (mock LLM, no API cost)
+python benchmarks/scripts/run_model_matrix.py \
+    --dataset security-rules --approach all --dry-run
+
+# Real comparison on a fixed subset across three models
+python benchmarks/scripts/run_model_matrix.py \
+    --models gpt-4.1,deepseek-chat,ollama-qwen3-coder \
+    --dataset openvuln --approach vulnhunterx --limit 50 \
+    --run-dir benchmarks/results/matrix_2026q2
+
+# Aggregate into a side-by-side table (+ optional charts)
+python benchmarks/scripts/compare_models.py \
+    --run-dir benchmarks/results/matrix_2026q2 --charts
+```
+
+Cost is the real provider-reported API cost (`$0` for local/Ollama models and any
+model LiteLLM has no price for). Forward dataset-specific flags after `--`,
+e.g. `… -- --juliet-per-cwe 20`.
+
+> Run the matrix on **Track-1** datasets (OpenVuln, OWASP, RealVuln, SecLLMHolmes,
+> security-rules). Track-2 detection sets (DiverseVul) are excluded from the
+> comparison — their numbers reflect the wrong task (see RESEARCH.md §6).
+
+---
+
+## Per-Dataset Playbooks
+
+### Juliet C/C++
+
+Synthetic, balanced TP/FP pairs per CWE. `--juliet-per-cwe` controls scale.
+
+```bash
+# Small sanity check — ~40 entries
+python benchmarks/scripts/run_benchmark.py \
+    --dataset juliet --approach vulnhunterx \
+    --juliet-per-cwe 5 --model gpt-4.1 --dry-run
+
+# Standard run — 8 BENCHMARK_CWES × 20 entries, balanced TP/FP
+python benchmarks/scripts/run_benchmark.py \
+    --dataset juliet --approach all \
+    --juliet-per-cwe 20 --model gpt-4.1
+
+# Full Juliet — local model strongly recommended
+python benchmarks/scripts/run_benchmark.py \
+    --dataset juliet --approach vulnhunterx \
+    --juliet-per-cwe 0 --model ollama/llama3.2 \
+    --run-dir benchmarks/results/juliet_full
+
+# Multi-turn iteration sweep
+python benchmarks/scripts/run_benchmark.py \
+    --dataset juliet --approach vulnhunterx \
+    --juliet-per-cwe 10 --model gpt-4.1 --iteration-sweep
+```
+
+### DiverseVul
+
+Real-world C/C++ functions with CVE-backed labels. Use `--limit` for scale and `--cwe` to target specific classes.
+
+When running through a low-RPM LLM proxy, leave `--llm-concurrency` at the default (4) even if you crank `--jobs` higher — DiverseVul fans out fast enough that 30 simultaneous model calls will exhaust a quota in seconds. LiteLLM also retries 429/transient failures automatically (`llm.num_retries`, default 5).
+
+By default, records whose source CVE has no CWE mapping are **dropped at load time**. These entries would otherwise land in a meaningless `"Unknown"` per-CWE bucket and force VulnHunterX into its generic-questions fallback, biasing the rule-specific ablation. Pass `--include-unknown-cwe` if you need the full corpus for binary classification only — the loader logs the dropped count either way.
+
+```bash
+# Targeted memory-safety dry-run
+python benchmarks/scripts/run_benchmark.py \
+    --dataset diversevul --approach vulnhunterx \
+    --limit 500 --cwe CWE-787 CWE-416 --dry-run
+
+# Medium run, all CWEs
+python benchmarks/scripts/run_benchmark.py \
+    --dataset diversevul --approach vulnhunterx \
+    --limit 5000 --model gpt-4.1
+
+# Full dataset — local model only
+python benchmarks/scripts/run_benchmark.py \
+    --dataset diversevul --approach vulnhunterx \
+    --limit 0 --model ollama/llama3.2 \
+    --run-dir benchmarks/results/diversevul_full
+
+# Per-CWE sweep
+for cwe in CWE-787 CWE-416 CWE-476 CWE-125; do
+  python benchmarks/scripts/run_benchmark.py \
+      --dataset diversevul --approach vulnhunterx \
+      --limit 500 --cwe $cwe \
+      --run-dir benchmarks/results/diversevul_$cwe
+done
+```
+
+### OWASP Benchmark (Java + Python)
+
+Two SAST test suites maintained by the OWASP Benchmark Project, each with CSV ground truth (`expectedresults-*.csv`). Each test case is a single file with a known TP/FP label and CWE — designed for SAST comparison.
+
+```bash
+# Smoke test (no LLM, fixture only)
+python benchmarks/scripts/run_benchmark.py \
+    --dataset owasp --approach raw-sast --limit 5
+
+# Clone the suites
+python benchmarks/scripts/setup_datasets.py --dataset owasp-java
+python benchmarks/scripts/setup_datasets.py --dataset owasp-python
+
+# Java only
+python benchmarks/scripts/run_benchmark.py \
+    --dataset owasp-java --approach all --model gpt-4.1 \
+    --run-dir benchmarks/results/owasp_java
+
+# Java + Python combined (--dataset owasp runs both suites sequentially)
+python benchmarks/scripts/run_benchmark.py \
+    --dataset owasp --approach vulnhunterx --model gpt-4.1
+```
+
+Use `--dataset owasp-java` or `--dataset owasp-python` to run one suite individually. `--dataset owasp` runs both.
+
+### RealVuln Benchmark
+
+Real CVE true-positives + curated false-positive traps across 26 Python web-framework repos. Currently Python-only (Flask / Django / FastAPI / aiohttp / Tornado), 796 findings.
+
+```bash
+# Smoke test (no LLM, fixture only)
+python benchmarks/scripts/run_benchmark.py \
+    --dataset realvuln --approach raw-sast --limit 5
+
+# Clone the suite
+python benchmarks/scripts/setup_datasets.py --dataset realvuln
+
+# Real run with a small model
+python benchmarks/scripts/run_benchmark.py \
+    --dataset realvuln --approach all --model gpt-4.1 \
+    --run-dir benchmarks/results/realvuln
+```
+
+For meaningful `code_snippet` content the adapter reads each function
+from a working tree at `benchmarks/datasets/realvuln/_repos/<repo_id>/`.
+When the working tree is absent the snippet is left empty and tagged
+`metadata.snippet_kind = "missing"` — the entry still scores for
+`raw-sast` comparison, but downstream LLM approaches need the source.
+
+#### Populating `_repos/<repo_id>/`
+
+The dataset ships a helper that clones all 26 benchmark repos at their
+pinned `commit_sha` values:
+
+```bash
+cd benchmarks/datasets/realvuln
+python3 clone_repos.py             # clones all 26 repos under _repos/
+python3 clone_repos.py --repo juice-shop   # single repo
+python3 smoke_test.py              # verify checkouts match expected SHAs
+```
+
+After cloning, return to the repo root and re-run `run_benchmark.py`:
+the adapter will resolve snippets from the new working trees
+automatically (no flag required). Estimated disk: ~3.5 GB for the full
+set; ~150 MB per repo on average.
+
+If you've already checked out some repos elsewhere on disk, you can
+either symlink them in (`ln -s ~/code/juice-shop _repos/juice-shop`)
+or pass `repos_cache` programmatically when calling
+`RealVulnAdapter()` directly.
+
+---
+
+## CLI Reference
+
+### `run_benchmark.py`
+
+```
+--dataset           secllmholmes | juliet | diversevul |
+                    owasp-java | owasp-python | owasp |
+                    realvuln | openvuln | security-rules |
+                    all  (default: secllmholmes)
+                    `owasp` runs both OWASP Java + Python; `all` runs every dataset.
+--approach          One or more of: raw-sast vulnhunterx ablation-generic
+                    ablation-zero ablation all  (default: all).
+                    `ablation` expands to vulnhunterx + ablation-generic + ablation-zero
+                    (specific arm = vulnhunterx, reused not re-run).
+--model             LLM model name  (default: LLM_MODEL from .env, fallback gpt-4.1)
+--provider          openai | anthropic | ollama  (default: LLM_PROVIDER from .env)
+--limit N           Max entries per dataset, 0=all  (default: 0)
+--lang LANG [...]   Filter fixture entries by language: c cpp python javascript php java go
+--cwe CWE [...]     DiverseVul only: filter by CWE ID(s), e.g. CWE-787 CWE-416
+--include-unknown-cwe  DiverseVul only: keep records with no CWE mapping (off by default)
+--juliet-per-cwe N  Juliet only: max entries per CWE, balanced TP/FP.
+                    5=small (~40)  20=standard (~160) [default]  0=all CWEs (~64K)
+--max-iterations N  Multi-turn rounds for vulnhunterx and ablation arms  (default: 10)
+--nmd-handling      exclude | fp  (default: exclude)
+--dry-run           Mock LLM responses — no API cost
+--resume            Skip completed pairs; continue in-progress pairs from last checkpoint
+--run-dir PATH      Explicit output directory (use with --resume for recovery)
+--run-id ID         Timestamp alias for --run-dir (e.g. 20260305_113225)
+--checkpoint-every N  Incremental checkpoint every N entries (default: 1)
+-j, --jobs N        Concurrent entries to evaluate (default: 4; set 1 to disable parallelism)
+--llm-concurrency N Cap concurrent in-flight LLM calls (default: 4; 0 disables).
+                    Independent of --jobs — threads still fan out at --jobs, but
+                    the model call is gated so rate-limited proxies don't 429.
+--verbose / -v      Detailed line per entry
+--quiet             Suppress progress display; log lines only
+--iteration-sweep   Run vulnhunterx at iterations = 1, 2, 3
+```
+
+### `setup_datasets.py`
+
+```
+--dataset  secllmholmes | juliet | diversevul |
+           owasp-java | owasp-python | realvuln | openvuln |
+           all  (default: all)
+           (security-rules is in-repo — no download needed)
+--list     List available datasets and exit
+```
+
+### `generate_report.py`
+
+```
+--run-dir  Path to benchmark run directory  (required)
+--charts   Generate matplotlib precision/recall charts
+```
+
+---
+
+## Metrics
+
+| Metric                     | Description                                                        |
+| -------------------------- | ------------------------------------------------------------------ |
+| **Precision**              | Of findings predicted TP, how many are actually vulnerable?        |
+| **Recall**                 | Of all truly vulnerable findings, how many did we catch?           |
+| **Effective Recall**       | Recall that counts NMDs on TPs as misses — see [RESEARCH.md § 2.5](RESEARCH.md#25-effective-recall-metric) |
+| **F1**                     | Harmonic mean of precision and recall                              |
+| **FP Reduction Rate**      | (raw-SAST FPs − approach FPs) / raw-SAST FPs                       |
+| **TP Preservation Rate**   | approach TPs / raw-SAST TPs (must stay high)                       |
+| **NMD Rate**               | Fraction returning "Needs More Data" (excluded from P/R/F1 by default) |
+| **Confidence Calibration** | Within each confidence bucket, what % of predictions were correct? |
+| **Tokens/Finding**         | Mean LLM tokens consumed per finding                               |
+| **Latency p95**            | 95th-percentile wall-clock time per finding                        |
+
+BENIGN entries (clean code not flagged by SAST) are tracked for cost/latency but excluded from precision/recall computation.
+
+---
+
+## Output Structure
+
+```
+benchmarks/results/<timestamp>/
+├── summary.json                        # All metrics in one file
+├── secllmholmes_raw-sast_results.json  # Per-approach checkpoints
+├── secllmholmes_vulnhunterx_results.json
+├── secllmholmes_ablation-generic_results.json   # ablation arms (when run)
+├── secllmholmes_ablation-zero_results.json
+├── ...
+├── REPORT.md                           # Human-readable report
+├── benchmark.log                       # Full DEBUG/INFO log
+├── findings.jsonl                      # One structured record per entry
+└── precision_recall.png                # Chart (when --charts is set)
+```
+
+---
+
+## Interpreting Results
+
+**Good result for VulnHunterX:**
+
+- `raw-sast`: recall = 100% by definition; precision ≈ 40% (typical SAST noise).
+- `vulnhunterx`: precision > 80%, recall > 85%.
+- FP reduction rate > 50% — eliminates more than half of raw-SAST false positives.
+- High-confidence predictions are > 90% accurate (calibration).
+
+**Warning signs:**
+
+- TP preservation rate < 80% → VulnHunterX is suppressing real bugs.
+- NMD rate > 30% → LLM is not getting enough context to decide.
+- Calibration flat across High/Medium/Low → confidence scores are noise.
+- `pred_api_error_count` > 0 in summary.json → some entries failed with an LLM API error (quota, rate-limit, network). REPORT.md surfaces this as a separate "LLM API failures" warning so it isn't conflated with model error. Re-run the affected entries with credit available before drawing conclusions about the methodology.
+
+### Snippet-only context — known ceilings
+
+Benchmark mode runs each entry against an in-memory code snippet only (no repo-wide context provider — see `_SnippetContextExtractor` in `benchmarks/approaches/base.py`). For most CWEs (injection, XSS, path traversal) the immediate snippet contains the source-to-sink flow and recall stays ≥90%. Two CWEs hit a hard floor because the deciding signal lives outside the snippet:
+
+- **CWE-328 (weak hashing)** — OWASP BenchmarkJava loads the algorithm name from `BenchmarkRunner.properties`; the snippet only shows `MessageDigest.getInstance(algo)` with no way to tell whether `algo` is `MD5` or `SHA-512`. The LLM correctly answers "no exploitable use" for the safe-default branch and gets graded as a false negative.
+- **CWE-78 (command injection)** — Polymorphic command builders (`helpers/Utils.executeCmd`) may strip or escape input before `Runtime.exec` runs; the snippet doesn't show the helper body.
+
+Mitigations available today: the question YAMLs for these rules declare `additional_context: ["caller", "global"]` and `min_iterations: 2` so a context-aware run (CLI verify with a populated `output/context/`) can request the helper file. A follow-up could wire a minimal `_SnippetContextProvider` for benchmark mode that serves an allow-listed set of repo-root helpers (`BenchmarkRunner.properties`, `helpers/Utils.java`).
+
+### Live progress
+
+```
+  ▶  secllmholmes × vulnhunterx  [228 entries]
+  [secllmholmes × vulnhunterx]  47/228  TP:23 FP:18 NMD:4 ERR:2  $0.42  3.2 s/entry  ETA 9m42s
+  ✓ secllmholmes × vulnhunterx  228/228  P=82.1% R=91.3% F1=86.5%  $1.84  12m15s
+```
+
+Use `--verbose` for one line per entry, `--quiet` for log lines only.
+
+---
+
+## Resuming Interrupted Runs
+
+Every run creates a new timestamped directory and does **not** auto-resume. Pair `--run-dir` with `--resume` to recover:
+
+```bash
+# Start with a stable directory name
+python benchmarks/scripts/run_benchmark.py \
+    --dataset all --approach all --model gpt-5 \
+    --run-dir benchmarks/results/my_run
+
+# Resume after Ctrl+C or system kill
+python benchmarks/scripts/run_benchmark.py \
+    --dataset all --approach all --model gpt-5 \
+    --run-dir benchmarks/results/my_run --resume
+
+# Inspect status mid-run
+grep -h '"status"' benchmarks/results/my_run/*_results.json
+
+# Generate a report from partial or completed results
+python benchmarks/scripts/generate_report.py --run-dir benchmarks/results/my_run
+```
+
+### Resume semantics
+
+| Checkpoint state             | `--resume` set | Behaviour                                             |
+| ---------------------------- | -------------- | ----------------------------------------------------- |
+| `completed`                  | yes            | Skip pair entirely                                    |
+| `in_progress`                | yes            | Restore prior entries; continue from where it stopped |
+| `completed` or `in_progress` | no             | Overwrite and restart the pair (logged as warning)    |
+| missing                      | either         | Start fresh                                           |
+
+Checkpointing is per-entry by default (`--checkpoint-every 1`). For cheap approaches you can amortize:
+
+```bash
+python benchmarks/scripts/run_benchmark.py \
+    --approach raw-sast --checkpoint-every 50 --run-dir benchmarks/results/my_run
+```
+
+---
+
+## Adding Datasets or Approaches
+
+### New dataset
+
+1. Create an adapter in `benchmarks/adapters/` implementing `load() -> list[GroundTruthEntry]`.
+2. Add a setup branch to `benchmarks/scripts/setup_datasets.py`.
+3. Add a loader branch to `_load_dataset()` in `benchmarks/scripts/run_benchmark.py`.
+4. Add a fixture file at `benchmarks/fixtures/<name>_sample.json`.
+5. Add unit tests in `tests/test_benchmark_adapters.py`.
+
+### New approach
+
+1. Subclass `RegisteredApproach` in `benchmarks/approaches/`.
+2. Implement `evaluate(entry: GroundTruthEntry) -> BenchmarkResult` and `from_options()`.
+3. Decorate the class with `@register_approach` and set a unique class-level `name`.
+4. If it lives in a new module, add that module to `_ensure_loaded()` in `benchmarks/approaches/registry.py` so the registry imports it.
