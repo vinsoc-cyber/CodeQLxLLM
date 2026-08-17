@@ -339,28 +339,36 @@ _REACHABILITY_GATE = "reachability_gate"
 
 
 def _downgrade_test_only_reachability(verdict, finding, provider, analysis_line):
-    """Withhold a Go True Positive whose exact enclosing function is test-only
-    (P5b, generalized across CWEs for #162).
+    """Withhold a True Positive whose exact enclosing function is test-only
+    (P5b, generalized across CWEs and languages for #162).
 
-    Fires only when: the final verdict is a legacy-model True Positive on a Go
-    finding; the resolved sink line lands in exactly one, repository-wide-
-    uniquely-named, non-test, non-``main``/``init`` function; that function
-    has >= 1 recorded caller and every recorded caller sits in a ``*_test.go``
-    file (unbounded, file-qualified enumeration); AND a complete scan finds no
-    reference to the function anywhere in visible non-test Go source. The verdict
-    then becomes Needs-More-Data (``decision_source="reachability_gate"``) — a
-    dangerous construct reached only from tests has unresolved production
-    reachability regardless of its CWE class (the argument is about the attacker
-    path, not the construct), and a static call graph cannot prove absence, so
-    this abstains and NEVER dismisses. Originally shipped scoped to CWE-208
-    (#174); #162 widened it to every Go CWE since all the evidence guards are
-    class-independent. Any failure/uncertainty leaves the verdict unchanged.
+    Fires only when: the final verdict is a legacy-model True Positive; the
+    finding's language has a declaration convention precise enough to locate a
+    single declaration token (``provider.TEST_SCAN_CONVENTIONS``); the resolved sink
+    line lands in exactly one, repository-wide-uniquely-named, non-test,
+    non-``main``/``init`` function; that function has >= 1 recorded caller and
+    every recorded caller sits in a test file per that language's convention
+    (unbounded, file-qualified enumeration); AND a complete scan finds no
+    reference to the function anywhere in visible non-test source of the
+    language. The verdict then becomes Needs-More-Data
+    (``decision_source="reachability_gate"``) — a dangerous construct reached
+    only from tests has unresolved production reachability regardless of its CWE
+    class (the argument is about the attacker path, not the construct), and a
+    static call graph cannot prove absence, so this abstains and NEVER dismisses.
+
+    Scope history: shipped for Go CWE-208 (#174); widened to every Go CWE
+    (#162), then to every language with an unambiguous declaration keyword —
+    go, python, javascript/typescript, php. java/csharp/c/cpp keep abstaining
+    because their declarations lead with modifiers and a return type rather than
+    a keyword, so no precise single-token match is reliable. Any
+    failure/uncertainty leaves the verdict unchanged.
     """
     if verdict.verdict not in ("True Positive", "TP"):
         return verdict
     if getattr(verdict, "decision_source", "legacy_model") != "legacy_model":
         return verdict
-    if (finding.lang or "").lower() != "go":
+    conv = scan_convention_for(finding.lang)
+    if conv is None:
         return verdict
     if not isinstance(provider, ContextProvider):
         return verdict
@@ -371,18 +379,18 @@ def _downgrade_test_only_reachability(verdict, finding, provider, analysis_line)
         return verdict
     if sym.symbol.name in ("main", "init"):
         return verdict
-    if (sym.symbol.source_ref.file or "").endswith("_test.go"):
+    if conv.is_test_file(sym.symbol.source_ref.file or ""):
         return verdict
     callers = provider.resolve_all_recorded_callers(finding.repo_name, finding.lang, sym.symbol)
     if not callers.enumerated_all_rows or callers.status is not EvidenceStatus.FOUND:
         return verdict
     if not callers.callers:
         return verdict
-    if not all(
-        c.source_ref.file.rsplit("/", 1)[-1].endswith("_test.go") for c in callers.callers
-    ):
+    if not all(conv.is_test_file(c.source_ref.file) for c in callers.callers):
         return verdict
-    scan = provider.scan_non_test_go_name_occurrences(finding.repo_name, sym.symbol)
+    scan = provider.scan_non_test_name_occurrences(
+        finding.repo_name, sym.symbol, finding.lang
+    )
     if scan.status is not EvidenceStatus.NOT_FOUND_COMPLETE:
         return verdict
     verdict.verdict = "Needs More Data"
@@ -391,7 +399,7 @@ def _downgrade_test_only_reachability(verdict, finding, provider, analysis_line)
     verdict.decision_source = _REACHABILITY_GATE
     verdict.reasoning = (verdict.reasoning or "") + (
         " [reachability_gate: model TP withheld; the exact enclosing function has "
-        "only _test.go references/callers in the analyzed repository, while the "
+        "only test-file references/callers in the analyzed repository, while the "
         "call graph remains non-authoritative for absence]"
     )
     return verdict
@@ -406,7 +414,7 @@ from vuln_hunter_x.context.anchor import (
 )
 from vuln_hunter_x.context.evidence import EvidenceStatus, SourceRef
 from vuln_hunter_x.context.extractor import ContextExtractor
-from vuln_hunter_x.context.provider import ContextProvider
+from vuln_hunter_x.context.provider import ContextProvider, scan_convention_for
 from vuln_hunter_x.context.repo_signals import (
     commented_out_symbol,
     detect_frameworks_for,

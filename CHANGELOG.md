@@ -31,6 +31,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `[cli]` extra (`pip install "vuln-hunter-x[cli]"`).
 
 ### Fixed
+- **Production-reachability gate now covers every language with an unambiguous
+  declaration keyword** (#162). The test-only-caller gate — which withholds a
+  True Positive whose exact enclosing function is reached only from test files
+  — was implemented for Go alone, so the same dead/test-only construct in
+  TypeScript, JavaScript, Python or PHP was still confirmed. The per-language
+  conventions (source extensions, test-file naming, declaration pattern) now
+  live in `provider.TEST_SCAN_CONVENTIONS`, and the reference scan is
+  extension-bounded rather than hardcoded to `*.go` / `*_test.go`.
+  `java`/`csharp`/`c`/`cpp` deliberately keep abstaining: their declarations
+  lead with modifiers and a return type rather than a keyword, so no precise
+  single declaration token can be located. Posture is unchanged — abstain to
+  Needs-More-Data, never dismiss, and any uncertainty leaves the verdict as-is.
 - Corrected drifted rule/question counts in the README and `config/RULES.md`,
   and added the previously-undocumented Semgrep rules (`js/dom-xss-sink`,
   `go/hardcoded-symmetric-key`, `go/permissive-cors`) to the inventory.
