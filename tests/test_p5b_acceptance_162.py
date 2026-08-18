@@ -195,3 +195,134 @@ def test_path_normalization_is_stable(tmp_path):
     b = p.resolve_repo_unique_enclosing_function("svc", "go", "./" + _SIG, 4)
     assert a.symbol is not None and b.symbol is not None
     assert a.symbol.source_ref.file == b.symbol.source_ref.file == _SIG
+
+
+# ---- #162 residual: the same end-to-end path for non-Go languages ----
+#
+# The unit tests in test_p5b_reachability_gate.py script the provider, so they
+# never exercise the real per-language declaration-token location or extension-
+# bounded scan. These drive the REAL ContextProvider for each newly supported
+# language, which is what proves the generalization actually works on source.
+
+_PY_DECL = "def verify_sig(a, b):\n    return a == b\n"
+_PY_TEST = "from app.crypto.signature import verify_sig\n\n\ndef test_v():\n    verify_sig('a', 'b')\n"
+_TS_DECL = "export function verifySig(a: string, b: string): boolean {\n  return a === b;\n}\n"
+_TS_TEST = "import { verifySig } from './signature';\n\nit('v', () => { verifySig('a', 'b'); });\n"
+_PHP_DECL = "<?php\nfunction verifySig($a, $b) {\n    return $a == $b;\n}\n"
+_PHP_TEST = "<?php\nclass SignatureTest {\n    public function testV() { verifySig('a','b'); }\n}\n"
+
+
+def _lang_repo(tmp_path, *, lang, decl_file, decl_src, test_file, test_src, fn, sink_line):
+    """Build a real repo + context CSVs for *lang* with one test-only function."""
+    return _repo(
+        tmp_path,
+        functions=[{
+            "name": fn, "file": decl_file,
+            "start_line": str(sink_line - 1), "end_line": str(sink_line + 1),
+        }],
+        callers=[{
+            "callee_name": fn, "callee_file": decl_file, "caller_name": "test_v",
+            "caller_file": test_file, "caller_start_line": "1", "caller_end_line": "5",
+        }],
+        sources={decl_file: decl_src, test_file: test_src},
+        lang=lang,
+    )
+
+
+def _lang_finding(lang, file, line):
+    return Finding(
+        rule_id=f"{lang}/timing-unsafe-comparison", message="timing", file=file,
+        start_line=line, end_line=line, repo_name="svc", lang=lang, cwe_ids=["CWE-208"],
+    )
+
+
+def test_python_test_only_function_downgrades(tmp_path):
+    p = _lang_repo(
+        tmp_path, lang="python",
+        decl_file="app/crypto/signature.py", decl_src=_PY_DECL,
+        test_file="app/crypto/test_signature.py", test_src=_PY_TEST,
+        fn="verify_sig", sink_line=2,
+    )
+    f = _lang_finding("python", "app/crypto/signature.py", 2)
+    v = Verdict(
+        finding=f, verdict="True Positive", confidence="High", reasoning="==",
+        answers=[], raw_response="{}", model="m", confidence_score=0.9,
+    )
+    out = _downgrade_test_only_reachability(v, f, p, 2)
+    assert out.verdict == "Needs More Data"
+    assert out.decision_source == "reachability_gate"
+
+
+def test_typescript_test_only_function_downgrades(tmp_path):
+    p = _lang_repo(
+        tmp_path, lang="javascript",
+        decl_file="src/crypto/signature.ts", decl_src=_TS_DECL,
+        test_file="src/crypto/signature.test.ts", test_src=_TS_TEST,
+        fn="verifySig", sink_line=2,
+    )
+    f = _lang_finding("javascript", "src/crypto/signature.ts", 2)
+    v = Verdict(
+        finding=f, verdict="True Positive", confidence="High", reasoning="===",
+        answers=[], raw_response="{}", model="m", confidence_score=0.9,
+    )
+    out = _downgrade_test_only_reachability(v, f, p, 2)
+    assert out.verdict == "Needs More Data"
+    assert out.decision_source == "reachability_gate"
+
+
+def test_php_test_only_function_downgrades(tmp_path):
+    p = _lang_repo(
+        tmp_path, lang="php",
+        decl_file="src/Crypto/Signature.php", decl_src=_PHP_DECL,
+        test_file="tests/Crypto/SignatureTest.php", test_src=_PHP_TEST,
+        fn="verifySig", sink_line=3,
+    )
+    f = _lang_finding("php", "src/Crypto/Signature.php", 3)
+    v = Verdict(
+        finding=f, verdict="True Positive", confidence="High", reasoning="==",
+        answers=[], raw_response="{}", model="m", confidence_score=0.9,
+    )
+    out = _downgrade_test_only_reachability(v, f, p, 3)
+    assert out.verdict == "Needs More Data"
+    assert out.decision_source == "reachability_gate"
+
+
+def test_python_production_reference_vetoes(tmp_path):
+    """A real non-test .py file referencing the function keeps the TP standing.
+
+    Exercises the negative veto through the real extension-bounded scan.
+    """
+    p = _lang_repo(
+        tmp_path, lang="python",
+        decl_file="app/crypto/signature.py", decl_src=_PY_DECL,
+        test_file="app/crypto/test_signature.py", test_src=_PY_TEST,
+        fn="verify_sig", sink_line=2,
+    )
+    (tmp_path / "repos" / "python" / "svc" / "app" / "api").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "repos" / "python" / "svc" / "app" / "api" / "handler.py").write_text(
+        "from app.crypto.signature import verify_sig\n\nverify_sig('a','b')\n", encoding="utf-8"
+    )
+    f = _lang_finding("python", "app/crypto/signature.py", 2)
+    v = Verdict(
+        finding=f, verdict="True Positive", confidence="High", reasoning="==",
+        answers=[], raw_response="{}", model="m", confidence_score=0.9,
+    )
+    assert _downgrade_test_only_reachability(v, f, p, 2).verdict == "True Positive"
+
+
+def test_unsupported_language_abstains_end_to_end(tmp_path):
+    """A Java finding with identical test-only evidence stays a True Positive."""
+    p = _lang_repo(
+        tmp_path, lang="java",
+        decl_file="src/main/java/Sig.java",
+        decl_src="class Sig {\n  boolean verifySig(String a, String b) {\n    return a == b;\n  }\n}\n",
+        test_file="src/test/java/SigTest.java",
+        test_src="class SigTest { void t() { new Sig().verifySig(\"a\",\"b\"); } }\n",
+        fn="verifySig", sink_line=3,
+    )
+    f = _lang_finding("java", "src/main/java/Sig.java", 3)
+    v = Verdict(
+        finding=f, verdict="True Positive", confidence="High", reasoning="==",
+        answers=[], raw_response="{}", model="m", confidence_score=0.9,
+    )
+    assert _downgrade_test_only_reachability(v, f, p, 3).verdict == "True Positive"

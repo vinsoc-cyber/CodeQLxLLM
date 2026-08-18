@@ -7,15 +7,22 @@ Go repo (functions.csv + callers.csv + real .go source). Deterministic, no LLM.
 Three methods, each fail-closed:
   - resolve_repo_unique_enclosing_function: (file,line) -> a repo-wide-unique SymbolRef
   - resolve_all_recorded_callers: unbounded, P5a-qualified caller enumeration
-  - scan_non_test_go_name_occurrences: conservative non-*_test.go reference veto
+  - scan_non_test_name_occurrences: conservative non-test reference veto,
+    per-language via TEST_SCAN_CONVENTIONS (#162)
 """
 
 from __future__ import annotations
 
 import csv
 
+import pytest
+
 from vuln_hunter_x.context.evidence import EvidenceStatus, SourceRef, SymbolRef
-from vuln_hunter_x.context.provider import ContextProvider
+from vuln_hunter_x.context.provider import (
+    TEST_SCAN_CONVENTIONS,
+    ContextProvider,
+    scan_convention_for,
+)
 
 _FUNC_COLS = ["name", "file", "start_line", "end_line", "param_count", "is_static"]
 _CALLER_COLS = [
@@ -314,3 +321,71 @@ def test_scan_decl_token_not_located_incomplete(tmp_path):
     p = _provider(tmp_path, functions=[_fn("verifySig", _SIG_FILE, 3, 5)], sources={_SIG_FILE: _DECL_ONLY})
     res = p.scan_non_test_go_name_occurrences("svc", _target(start=1, end=1))
     assert res.status is EvidenceStatus.INCOMPLETE_INDEX
+
+
+# ---- #162: per-language test-file classification ----
+#
+# Over-recognising a test file is the dangerous direction: the gate requires
+# EVERY caller to be a test file, so a production file wrongly classified as a
+# test would suppress a real finding. Under-recognising only stops the gate.
+
+
+@pytest.mark.parametrize(
+    "lang,basename",
+    [
+        ("go", "signature_test.go"),
+        ("python", "test_signature.py"),
+        ("python", "signature_test.py"),
+        ("javascript", "signature.test.js"),
+        ("javascript", "signature.spec.ts"),
+        ("javascript", "signature.test.tsx"),
+        ("javascript", "signature.spec.mjs"),
+        ("typescript", "signature.test.ts"),
+        ("php", "SignatureTest.php"),
+        ("php", "signature_test.php"),
+    ],
+)
+def test_test_files_recognised(lang, basename):
+    assert scan_convention_for(lang).is_test_file(basename) is True
+
+
+@pytest.mark.parametrize(
+    "lang,basename",
+    [
+        # The separator-less-suffix trap: these are production files whose names
+        # merely END in "test"/"spec" text.
+        ("php", "latest.php"),
+        ("php", "greatest.php"),
+        ("php", "Latest.php"),
+        ("go", "latest.go"),
+        ("python", "latest.py"),
+        ("python", "contest.py"),
+        ("python", "unittest_utils.py"),
+        ("javascript", "latest.js"),
+        ("javascript", "testing.ts"),
+        ("javascript", "protest.tsx"),
+        # Real production names in each language.
+        ("go", "signature.go"),
+        ("python", "signature.py"),
+        ("javascript", "signature.ts"),
+        ("php", "Signature.php"),
+    ],
+)
+def test_production_files_not_recognised(lang, basename):
+    assert scan_convention_for(lang).is_test_file(basename) is False
+
+
+def test_path_prefix_is_ignored_only_basename_classifies():
+    conv = scan_convention_for("python")
+    assert conv.is_test_file("app/tests/helpers/test_thing.py") is True
+    # A "tests/" directory alone does not make the file a test module.
+    assert conv.is_test_file("app/tests/helpers/thing.py") is False
+
+
+def test_unsupported_languages_have_no_convention():
+    for lang in ("java", "csharp", "c", "cpp", "ruby", "", None):
+        assert scan_convention_for(lang) is None
+
+
+def test_typescript_aliases_javascript_convention():
+    assert TEST_SCAN_CONVENTIONS["typescript"] is TEST_SCAN_CONVENTIONS["javascript"]

@@ -73,6 +73,83 @@ _JS_ROUTE_REGISTRATION_RE = re.compile(
 _JS_SOURCE_EXTS = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".tsx")
 
 
+@dataclass(frozen=True)
+class TestScanConvention:
+    """Per-language conventions the test-only reachability scan needs (#162).
+
+    ``source_exts`` bounds the reference scan; ``decl_patterns`` locate the
+    declaration token to exclude from it (each pattern's group 1 is the token,
+    and the union must match exactly once or the scan abstains); ``is_test_file``
+    classifies a *basename*.
+
+    Deliberately conservative in both directions. Under-recognising a test file
+    only stops the gate firing (the caller check requires *every* caller to be
+    in a test file), whereas over-recognising one would suppress a real finding
+    — so the predicates match established, unambiguous conventions only.
+    """
+
+    source_exts: tuple[str, ...]
+    decl_patterns: tuple[str, ...]
+    test_file_pattern: str = ""
+
+    def is_test_file(self, path_or_basename: str) -> bool:
+        """True when the *basename* follows this language's test-file convention.
+
+        Matched with an anchored regex rather than a bare suffix so a separator
+        is always required: a naive ``endswith("test.php")`` would also classify
+        ``latest.php`` as a test file, and over-recognition here silently
+        suppresses real findings.
+        """
+        if not self.test_file_pattern:
+            return False
+        name = path_or_basename.replace("\\", "/").rsplit("/", 1)[-1]
+        return bool(re.search(self.test_file_pattern, name))
+
+
+# Languages whose function declarations start with an unambiguous keyword, so a
+# single declaration token can be located precisely. java/csharp/c/cpp are
+# deliberately ABSENT: their declarations lead with modifiers and a return type
+# rather than a keyword, so no precise single-token match is reliable and the
+# gate must keep abstaining for them (see _downgrade_test_only_reachability).
+TEST_SCAN_CONVENTIONS: dict[str, TestScanConvention] = {
+    "go": TestScanConvention(
+        source_exts=(".go",),
+        decl_patterns=(r"\bfunc\b\s+(?:\([^)]*\)\s*)?({name})\b",),
+        # Go's own convention: the _test.go suffix is what `go test` recognises.
+        test_file_pattern=r"_test\.go$",
+    ),
+    "python": TestScanConvention(
+        source_exts=(".py",),
+        decl_patterns=(r"\b(?:async\s+)?def\s+({name})\b",),
+        # pytest/unittest discovery: test_*.py or *_test.py.
+        test_file_pattern=r"(?:^test_.*\.py$|_test\.py$)",
+    ),
+    "javascript": TestScanConvention(
+        source_exts=_JS_SOURCE_EXTS,
+        decl_patterns=(
+            r"\bfunction\s*\*?\s+({name})\b",
+            r"\b(?:const|let|var)\s+({name})\s*=",
+        ),
+        # jest/vitest/mocha: foo.test.ts, foo.spec.tsx, foo.test.mjs ...
+        test_file_pattern=r"\.(?:test|spec)\.(?:[cm]?jsx?|[cm]?tsx?)$",
+    ),
+    "php": TestScanConvention(
+        source_exts=(".php",),
+        decl_patterns=(r"\bfunction\s+&?\s*({name})\b",),
+        # PHPUnit: CamelCase FooTest.php (case-sensitive, so latest.php is not a
+        # test), plus the snake_case foo_test.php variant.
+        test_file_pattern=r"(?:Test\.php$|_test\.php$)",
+    ),
+}
+# TypeScript shares the JavaScript convention (the ext set already covers .ts/.tsx).
+TEST_SCAN_CONVENTIONS["typescript"] = TEST_SCAN_CONVENTIONS["javascript"]
+
+
+def scan_convention_for(lang: str | None) -> TestScanConvention | None:
+    """Convention for *lang*, or ``None`` when the gate must abstain."""
+    return TEST_SCAN_CONVENTIONS.get((lang or "").lower())
+
+
 @dataclass
 class _GrepBounds:
     """Whether a repo grep stopped early. A bound-out search is incomplete and
@@ -476,12 +553,21 @@ class ContextProvider:
             EvidenceStatus.FOUND, target, tuple(callers), enumerated_all_rows=True
         )
 
-    def _locate_go_decl_token(
-        self, resolved_root: Path, decl_file_rel: str, name: str, start_line: int
+    def _locate_decl_token(
+        self,
+        resolved_root: Path,
+        decl_file_rel: str,
+        name: str,
+        start_line: int,
+        conv: TestScanConvention,
     ) -> tuple[str, int, int] | None:
-        """Locate the single declaration-name token of ``name`` on its ``func``
+        """Locate the single declaration-name token of ``name`` on its declaration
         line, returning ``(decl_file_rel, line, col)`` — or ``None`` if it cannot
-        be uniquely located (so the scan abstains rather than mis-exclude)."""
+        be uniquely located (so the scan abstains rather than mis-exclude).
+
+        Uniqueness is required across the union of the language's declaration
+        patterns: two distinct columns (or none) mean the token is ambiguous.
+        """
         decl_path = resolved_root / decl_file_rel
         try:
             if not decl_path.is_file():
@@ -491,30 +577,40 @@ class ContextProvider:
             return None
         if start_line < 1 or start_line > len(lines):
             return None
-        decl_re = re.compile(r"\bfunc\b\s+(?:\([^)]*\)\s*)?(" + re.escape(name) + r")\b")
-        hits = [
-            (decl_file_rel, start_line, m.start(1))
-            for m in decl_re.finditer(lines[start_line - 1])
-        ]
-        return hits[0] if len(hits) == 1 else None
+        line = lines[start_line - 1]
+        cols = {
+            m.start(1)
+            for pattern in conv.decl_patterns
+            for m in re.finditer(pattern.format(name=re.escape(name)), line)
+        }
+        if len(cols) != 1:
+            return None
+        return (decl_file_rel, start_line, cols.pop())
 
-    def scan_non_test_go_name_occurrences(
-        self, repo_name: str, target: SymbolRef
+    def scan_non_test_name_occurrences(
+        self, repo_name: str, target: SymbolRef, lang: str | None = None
     ) -> ReferenceScanResult:
-        """Scan every non-``*_test.go`` Go file for occurrences of ``target.name``,
-        excluding exactly the declaration token (P5b negative veto).
+        """Scan every non-test source file of *lang* for occurrences of
+        ``target.name``, excluding exactly the declaration token (P5b negative
+        veto, generalized across languages for #162).
 
         Conservative by construction: a word-boundary textual match over-includes
         comments/strings (safe suppression) but never under-suppresses a real
-        call / function-value / registration reference. Scans ALL Go source
-        (including ``vendor/``, ``tests/``, generated, demo, mock) — only exact
-        ``_test.go`` basenames are excluded. ``NOT_FOUND_COMPLETE`` only after a
-        complete zero-occurrence scan; any read/walk/decl-location failure →
-        ``INCOMPLETE_INDEX``.
+        call / function-value / registration reference. Scans ALL source of the
+        language's extensions (including ``vendor/``, ``tests/``, generated,
+        demo, mock) — only basenames matching the language's test convention are
+        excluded. ``NOT_FOUND_COMPLETE`` only after a complete zero-occurrence
+        scan; an unsupported language or any read/walk/decl-location failure →
+        ``INCOMPLETE_INDEX``, which makes the caller abstain.
         """
         sr = target.source_ref
         if sr is None:
             return ReferenceScanResult(EvidenceStatus.INCOMPLETE_INDEX, target, detail="no symbol ref")
+        conv = scan_convention_for(lang or sr.lang)
+        if conv is None:
+            return ReferenceScanResult(
+                EvidenceStatus.INCOMPLETE_INDEX, target, detail="unsupported language"
+            )
         root = resolve_repo_root(self.repos_dir, sr.lang, repo_name)
         if root is None:
             return ReferenceScanResult(EvidenceStatus.INCOMPLETE_INDEX, target, detail="no repo root")
@@ -522,7 +618,7 @@ class ContextProvider:
             resolved_root = root.resolve()
         except OSError:
             return ReferenceScanResult(EvidenceStatus.INCOMPLETE_INDEX, target, detail="unresolvable root")
-        decl_pos = self._locate_go_decl_token(resolved_root, sr.file, target.name, sr.start)
+        decl_pos = self._locate_decl_token(resolved_root, sr.file, target.name, sr.start, conv)
         if decl_pos is None:
             return ReferenceScanResult(
                 EvidenceStatus.INCOMPLETE_INDEX, target, detail="declaration token not located"
@@ -530,8 +626,12 @@ class ContextProvider:
         pat = re.compile(r"(?<!\w)" + re.escape(target.name) + r"(?!\w)")
         matches: list[SourceRef] = []
         try:
-            for path in sorted(resolved_root.rglob("*.go")):
-                if not path.is_file() or path.name.endswith("_test.go"):
+            for path in sorted(resolved_root.rglob("*")):
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() not in conv.source_exts:
+                    continue
+                if conv.is_test_file(path.name):
                     continue
                 rel = path.resolve().relative_to(resolved_root).as_posix()
                 for i, line in enumerate(
@@ -548,6 +648,12 @@ class ContextProvider:
         return ReferenceScanResult(
             EvidenceStatus.NOT_FOUND_COMPLETE, target, (), scan_complete=True
         )
+
+    def scan_non_test_go_name_occurrences(
+        self, repo_name: str, target: SymbolRef
+    ) -> ReferenceScanResult:
+        """Go-specific wrapper retained for callers predating #162."""
+        return self.scan_non_test_name_occurrences(repo_name, target, "go")
 
     def scan_js_route_bindings(
         self, repo_name: str, lang: str, handler_name: str, limit: int = 5
