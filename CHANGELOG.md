@@ -31,6 +31,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   `[cli]` extra (`pip install "vuln-hunter-x[cli]"`).
 
 ### Fixed
+- **Consequence is now decisive for `sizeof`-on-pointer and check-then-use
+  findings** (#119). Both CodeQL classes had no evidence-closure family, so they
+  fell to the legacy path where the flagged construct plus "no defense is
+  visible" was enough to confirm — even when the pointer width was only printed,
+  or the racing process ran with exactly the privileges of whoever supplied the
+  path. Two new declarative families close them: `pointer_sizeof` (CWE-467)
+  entails a True Positive only when the pointer width actually bounds a memory
+  operation *and* undersizes it, and `toctou_race` (CWE-367) only when the
+  pathname is re-resolved at the use *and* the race crosses a privilege
+  boundary. Neither family looks for a sanitizer — `sizeof` resolves from the
+  operand's static type and a TOCTOU guard is a handle binding, so "nothing
+  guards it" can no longer stand in for a consequence. An unresolved consequence
+  is honest Needs-More-Data.
 - **Production-reachability gate now covers every language with an unambiguous
   declaration keyword** (#162). The test-only-caller gate — which withholds a
   True Positive whose exact enclosing function is reached only from test files
