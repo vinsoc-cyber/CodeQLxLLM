@@ -160,6 +160,8 @@ def test_all_bundled_policies_offer_only_substantiable_values():
         "loose_equality",
         "path_access",
         "permissive_cors",
+        "pointer_sizeof",
         "sql_injection",
+        "toctou_race",
         "xpath_injection",
     ]
