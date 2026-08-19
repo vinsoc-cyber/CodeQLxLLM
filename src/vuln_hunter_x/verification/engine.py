@@ -1735,9 +1735,10 @@ class VerificationEngine:
         # Path-injection trust-boundary calibration: a TP whose path source is a
         # CLI argv (operator-controlled, no privilege boundary) is not CWE-22.
         verdict = _downgrade_cli_path_injection(verdict)
-        # Reachability gate (P5b, #162): withhold a Go CWE-208 TP whose exact
-        # enclosing function is reached only from *_test.go — abstain to NMD, never
-        # dismiss (the call graph cannot prove absence of a production caller).
+        # Reachability gate (P5b, #162): withhold a TP whose exact enclosing
+        # function is reached only from test files, in any language with an
+        # unambiguous declaration keyword — abstain to NMD, never dismiss (the
+        # call graph cannot prove absence of a production caller).
         verdict = _downgrade_test_only_reachability(
             verdict, finding, effective_provider, anchor.analysis_line
         )
