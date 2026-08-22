@@ -314,22 +314,29 @@ class ApproachMetrics:
 
         Treats reduction as a binomial (#FPs eliminated out of #raw FPs).
         """
-        if raw_sast_fp_count == 0:
+        if raw_sast_fp_count == 0 or self.total_processed == 0:
             return None
         eliminated = raw_sast_fp_count - self.fp_missed
         eliminated = max(0, min(eliminated, raw_sast_fp_count))
         return wilson_ci(eliminated, raw_sast_fp_count, confidence)
 
     def fp_reduction_rate(self, raw_sast_fp_count: int) -> float | None:
-        """FP reduction vs raw SAST: (SAST_FPs - Approach_FPs) / SAST_FPs."""
-        if raw_sast_fp_count == 0:
+        """FP reduction vs raw SAST: (SAST_FPs - Approach_FPs) / SAST_FPs.
+
+        None when this approach processed 0 entries — an empty run has
+        eliminated nothing and must not render as a perfect 100.0%.
+        """
+        if raw_sast_fp_count == 0 or self.total_processed == 0:
             return None
         reduced = raw_sast_fp_count - self.fp_missed
         return reduced / raw_sast_fp_count
 
     def tp_preservation_rate(self, raw_sast_tp_count: int) -> float | None:
-        """TP preservation vs raw SAST: approach_TPs / SAST_TPs."""
-        if raw_sast_tp_count == 0:
+        """TP preservation vs raw SAST: approach_TPs / SAST_TPs.
+
+        None when this approach processed 0 entries (see fp_reduction_rate).
+        """
+        if raw_sast_tp_count == 0 or self.total_processed == 0:
             return None
         return self.tp_correct / raw_sast_tp_count
 

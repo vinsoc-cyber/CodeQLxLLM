@@ -46,8 +46,10 @@ models:
     tier: headline
     env: .env.deepseek
 
-  - id: ollama-qwen3-coder
+  # qwen3-coder:480b-cloud was retired 2026-07-15 (API: "model was retired");
+  # gpt-oss:120b-cloud is the README's documented, currently-reachable example.
+  - id: ollama-gpt-oss
     provider: ollama
-    model: ollama/qwen3-coder:480b-cloud
+    model: ollama/gpt-oss:120b-cloud
     tier: headline
     env: .env.ollama

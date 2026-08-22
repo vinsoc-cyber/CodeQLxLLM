@@ -112,6 +112,24 @@ python benchmarks/scripts/run_benchmark.py \
     --model gpt-4.1 --limit 50
 ```
 
+> **Function-granularity datasets and LLM approaches (#125).** SecLLMHolmes
+> and Juliet label whole files/functions, so their adapters cannot provide the
+> real flagged line the line-aware verifier approaches require. The runner
+> therefore anchors these datasets automatically (`--anchor auto`, the
+> default): it runs OpenGrep over the dataset files and anchors each entry on
+> a genuine scanner finding whose rule matches the entry's CWE. Entries the
+> scanner never flags are dropped **for every approach, raw-sast included**,
+> so baseline-relative metrics compare identical populations — the reported
+> entry count will be smaller than the raw dataset size (e.g. SecLLMHolmes
+> 264 → 36 with the vendored offline rules; the offline C ruleset has no
+> CWE-aligned coverage, so the anchored subset is the Python CWE-79/89
+> slice). `--anchor-alignment any` also keeps CWE-misaligned anchors (marked
+> `metadata.rule_aligned=false`); `--anchor none` disables anchoring, in
+> which case LLM approaches skip these datasets with an explicit error
+> instead of silently scoring 0 entries. Anchoring needs `opengrep` on PATH
+> (or `OPENGREP_PATH`); scan results are cached next to the dataset in
+> `.vhx_anchor_cache.json`.
+
 ### 5. Generate the report
 
 ```bash
@@ -399,6 +417,13 @@ or pass `repos_cache` programmatically when calling
 --juliet-per-cwe N  Juliet only: max entries per CWE, balanced TP/FP.
                     5=small (~40)  20=standard (~160) [default]  0=all CWEs (~64K)
 --max-iterations N  Multi-turn rounds for vulnhunterx and ablation arms  (default: 10)
+--anchor            auto | opengrep | none  (default: auto). Derive real
+                    sink-line anchors for function-granularity datasets by
+                    running OpenGrep over the dataset files (#125). See
+                    "Function-granularity datasets and LLM approaches" above.
+--anchor-alignment  strict | any  (default: strict). strict anchors only on
+                    findings whose rule matches the entry's CWE; any also
+                    keeps misaligned anchors (metadata.rule_aligned=false).
 --nmd-handling      exclude | fp  (default: exclude)
 --dry-run           Mock LLM responses — no API cost
 --resume            Skip completed pairs; continue in-progress pairs from last checkpoint
@@ -498,10 +523,13 @@ Mitigations available today: the question YAMLs for these rules declare `additio
 ### Live progress
 
 ```
-  ▶  secllmholmes × vulnhunterx  [228 entries]
-  [secllmholmes × vulnhunterx]  47/228  TP:23 FP:18 NMD:4 ERR:2  $0.42  3.2 s/entry  ETA 9m42s
-  ✓ secllmholmes × vulnhunterx  228/228  P=82.1% R=91.3% F1=86.5%  $1.84  12m15s
+  ▶  secllmholmes × vulnhunterx  [36 entries]
+  [secllmholmes × vulnhunterx]  20/36  TP:11 FP:6 NMD:2 ERR:1  $0.09  3.2 s/entry  ETA 51s
+  ✓ secllmholmes × vulnhunterx  36/36  P=82.1% R=91.3% F1=86.5%  $0.17  1m55s
 ```
+
+(Entry counts on SecLLMHolmes/Juliet reflect the scanner-anchored subset —
+see the `--anchor` note in Quick Start step 4.)
 
 Use `--verbose` for one line per entry, `--quiet` for log lines only.
 

@@ -243,6 +243,94 @@ def _load_dataset(
     )
 
 
+def _maybe_anchor_dataset(
+    name: str,
+    entries: list[GroundTruthEntry],
+    approach_names: list[str],
+    anchor_mode: str,
+    anchor_alignment: str,
+    dry_run: bool,
+) -> list[GroundTruthEntry]:
+    """Give function-granularity datasets real scanner-derived anchors (#125).
+
+    Runs OpenGrep over the dataset files and anchors each entry on an actual
+    finding in its file, so line-anchored LLM approaches evaluate real
+    scanner-shaped findings instead of silently dropping the whole dataset.
+    Entries the scanner never flags are dropped — for EVERY approach, raw-sast
+    included — so baseline-relative metrics (FP-reduction, TP-preservation)
+    compare identical populations.
+
+    Returns the (possibly reduced) entry list; returns ``entries`` unchanged
+    whenever anchoring does not apply.
+    """
+    from benchmarks.adapters.scanner_anchor import anchor_entries, opengrep_binary
+    from benchmarks.approaches.registry import get_approach
+
+    if anchor_mode == "none":
+        return entries
+
+    def _line_anchored(approach_name: str) -> bool:
+        try:
+            return bool(getattr(get_approach(approach_name), "line_anchored", False))
+        except KeyError:
+            return False
+
+    if not any(_line_anchored(a) for a in approach_names):
+        return entries
+
+    unanchored = [e for e in entries if not e.is_line_anchored]
+    if not unanchored:
+        return entries
+
+    if anchor_mode == "auto":
+        if dry_run:
+            logger.info(
+                "anchor: skipping scanner anchoring for %s on --dry-run "
+                "(pass --anchor opengrep to force)", name,
+            )
+            return entries
+        if len(unanchored) < len(entries):
+            # Partially anchored dataset (e.g. realvuln): the adapter already
+            # provides real anchors where they exist; don't reshape it.
+            return entries
+
+    ds_path = _resolve_dataset_path(name)
+    if not ds_path.is_dir():
+        # Fixture-backed load: entry file paths don't exist on disk.
+        logger.warning(
+            "anchor: dataset %s is fixture-backed (no files at %s); cannot "
+            "derive scanner anchors — LLM approaches will skip it", name, ds_path,
+        )
+        return entries
+
+    if opengrep_binary() is None:
+        msg = (
+            f"anchor: opengrep not found — cannot anchor {name}; line-anchored "
+            "LLM approaches will evaluate 0 entries (set OPENGREP_PATH or "
+            "install opengrep)"
+        )
+        if anchor_mode == "opengrep":
+            raise SystemExit(msg)
+        logger.warning("%s", msg)
+        return entries
+
+    anchored, stats = anchor_entries(entries, ds_path, alignment=anchor_alignment)
+    logger.warning(
+        "anchor: %s — %s. The benchmark population for ALL approaches is now "
+        "the scanner-flagged subset (%d entries).",
+        name, stats.summary(), len(anchored),
+    )
+    if not anchored:
+        logger.error(
+            "anchor: %s — the scanner flagged nothing; no LLM benchmark is "
+            "possible on this dataset with the vendored offline rules. "
+            "Consider --anchor-alignment any, or the product pipeline with "
+            "CodeQL (`vuln-hunter-x scan --profile extended`).",
+            name,
+        )
+    return anchored
+
+
 # ── Approach factory ─────────────────────────────────────────────────────────
 
 def _build_approach(
@@ -395,8 +483,9 @@ def _check_run_config_drift(run_dir: Path, current: dict) -> None:
     except (json.JSONDecodeError, OSError):
         return
     drift = [
-        k for k in ("model", "provider", "nmd_handling")
-        if stored.get(k) != current.get(k)
+        k for k in ("model", "provider", "nmd_handling", "anchor", "anchor_alignment")
+        # `k in stored` keeps resumes of pre-anchor-era runs warning-free.
+        if k in stored and stored.get(k) != current.get(k)
     ]
     if drift:
         logger.warning(
@@ -518,6 +607,18 @@ def run_one(
             _n_unanchored, "y" if _n_unanchored == 1 else "ies",
             approach_name, dataset_name,
         )
+    if not entries and _load_checkpoint(run_dir, dataset_name, approach_name) is None:
+        # A pair with nothing to evaluate must fail loudly, not save an empty
+        # "completed" checkpoint that renders as a perfect score (e.g.
+        # FP-Reduction 100.0% over 0 entries — see
+        # benchmarks/results/secllmholmes_anchored/REPORT.md §3).
+        logger.error(
+            "SKIP %s × %s: 0 evaluable entries (%d excluded as line-unanchored). "
+            "No checkpoint written. Anchor the dataset with real scanner "
+            "findings (--anchor opengrep) or run it with raw-sast only.",
+            dataset_name, approach_name, _n_unanchored,
+        )
+        return None
 
     prior_results: list[BenchmarkResult] = []
     processed_ids: set[str] = set()
@@ -890,6 +991,37 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--anchor",
+        choices=["auto", "opengrep", "none"],
+        default="auto",
+        help=(
+            "Derive real sink-line anchors for function-granularity datasets "
+            "(SecLLMHolmes, Juliet, …) by running OpenGrep over the dataset "
+            "files, so line-anchored LLM approaches can evaluate them (#125). "
+            "'auto' (default): anchor when an LLM approach is requested, the "
+            "dataset is fully line-unanchored, and opengrep is installed — "
+            "skipped on --dry-run. 'opengrep': always anchor; error if the "
+            "binary is missing. 'none': never anchor (LLM approaches then "
+            "skip line-unanchored datasets entirely, with an error). "
+            "Anchoring restricts ALL approaches (raw-sast included) to the "
+            "scanner-flagged subset so baseline-relative metrics compare "
+            "identical populations."
+        ),
+    )
+    parser.add_argument(
+        "--anchor-alignment",
+        choices=["strict", "any"],
+        default="strict",
+        help=(
+            "With --anchor: 'strict' (default) anchors an entry only on a "
+            "finding whose rule carries the entry's CWE tag — a mismatched "
+            "finding (e.g. a generic dangerous-function hit in a "
+            "path-traversal scenario) would score correct verdicts as "
+            "failures. 'any' also anchors on unaligned findings and records "
+            "metadata.rule_aligned=false for slicing in reports."
+        ),
+    )
+    parser.add_argument(
         "--nmd-handling",
         choices=["exclude", "fp"],
         default="exclude",
@@ -1119,6 +1251,8 @@ def main() -> int:
         "datasets": datasets,
         "approaches": approaches,
         "dry_run": args.dry_run,
+        "anchor": args.anchor,
+        "anchor_alignment": args.anchor_alignment,
     }
     _save_run_config(run_dir, current_config)
     if args.resume:
@@ -1235,6 +1369,24 @@ def main() -> int:
                 except ValueError as exc:
                     logger.error("Adapter quality check failed: %s", exc)
                     continue
+
+            # Real scanner-derived anchors for function-granularity datasets
+            # (#125) — without this, line-anchored LLM approaches would drop
+            # every entry and the "LLM benchmark" would make zero LLM calls.
+            entries = _maybe_anchor_dataset(
+                dataset_name,
+                entries,
+                approaches,
+                args.anchor,
+                args.anchor_alignment,
+                args.dry_run,
+            )
+            if not entries:
+                logger.error(
+                    "Skipping dataset %s: no entries left after anchoring.",
+                    dataset_name,
+                )
+                continue
 
             iteration_values = [1, 2, 3] if args.iteration_sweep else [args.max_iterations]
 
