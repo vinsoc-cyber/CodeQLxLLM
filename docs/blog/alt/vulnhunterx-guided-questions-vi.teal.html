@@ -1,0 +1,1758 @@
+<title>Truy tìm lỗ hổng bằng LLM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Be+Vietnam+Pro:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --ground: #F4F6F7;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1F2;
+    --ink: #121D24;
+    --ink-2: #4E606C;
+    --ink-3: #7A8B95;
+    --rule: #D5DEE2;
+    --rule-strong: #B4C3C9;
+    --accent: #0089A0;
+    --accent-deep: #00646F;
+    --tp: #B4442E;
+    --fp: #3D6EA8;
+    --nmd: #B07A28;
+    --code-bg: #EFF3F4;
+    --quote-bg: #E9EFF1;
+
+    --measure: 41rem;
+    --wide: 60rem;
+    --full: 76rem;
+
+    --f-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --f-body: "Be Vietnam Pro", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --f-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme:dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0D1418;
+      --surface: #131E23;
+      --surface-2: #18262C;
+      --ink: #E3EDF1;
+      --ink-2: #9DB0BA;
+      --ink-3: #71858F;
+      --rule: #26363E;
+      --rule-strong: #3A4E58;
+      --accent: #35B4C4;
+      --accent-deep: #6FD0DC;
+      --tp: #D2664D;
+      --fp: #5B93D0;
+      --nmd: #B8862B;
+      --code-bg: #101A1F;
+      --quote-bg: #152329;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0D1418;
+    --surface: #131E23;
+    --surface-2: #18262C;
+    --ink: #E3EDF1;
+    --ink-2: #9DB0BA;
+    --ink-3: #71858F;
+    --rule: #26363E;
+    --rule-strong: #3A4E58;
+    --accent: #35B4C4;
+    --accent-deep: #6FD0DC;
+    --tp: #D2664D;
+    --fp: #5B93D0;
+    --nmd: #B8862B;
+    --code-bg: #101A1F;
+    --quote-bg: #152329;
+  }
+
+  * {
+    box-sizing: border-box
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-weight: 400;
+    font-size: 1.0625rem;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── layout ───────────────────────────────────────────── */
+  .page {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.25rem, 1fr) [wide-start] minmax(0, calc((var(--wide) - var(--measure))/2)) [text-start] minmax(0, var(--measure)) [text-end] minmax(0, calc((var(--wide) - var(--measure))/2)) [wide-end] minmax(1.25rem, 1fr) [full-end];
+    row-gap: 0;
+  }
+
+  .page>* {
+    grid-column: text
+  }
+
+  .page>.wide {
+    grid-column: wide
+  }
+
+  .page>.full {
+    grid-column: full;
+    justify-self: center;
+    width: 100%;
+    max-width: var(--full)
+  }
+
+  /* ── masthead ─────────────────────────────────────────── */
+  .masthead {
+    padding: 4.5rem 0 0
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: .7rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    margin: 0 0 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+  }
+
+  .eyebrow::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--rule)
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5.2vw, 3.35rem);
+    line-height: 1.1;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 1.25rem;
+  }
+
+  .dek {
+    font-family: var(--f-display);
+    font-size: clamp(1.1rem, 2.2vw, 1.3rem);
+    line-height: 1.55;
+    color: var(--ink-2);
+    margin: 0 0 2rem;
+    text-wrap: pretty;
+  }
+
+  .byline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem 1.25rem;
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    letter-spacing: .05em;
+    color: var(--ink-3);
+    padding: 1rem 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 3rem;
+  }
+
+  /* ── hero stats ───────────────────────────────────────── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 0 0 3.5rem;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 1.4rem 1.25rem
+  }
+
+  .stat b {
+    display: block;
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 2rem;
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent-deep);
+    margin-bottom: .35rem;
+  }
+
+  .stat span {
+    display: block;
+    font-size: .82rem;
+    line-height: 1.45;
+    color: var(--ink-2)
+  }
+
+  /* ── sections ─────────────────────────────────────────── */
+  section {
+    padding: 1rem 0 2.5rem
+  }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(1.6rem, 3.4vw, 2.05rem);
+    line-height: 1.2;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 2.5rem 0 1.25rem;
+    padding-top: 2.5rem;
+    border-top: 2px solid var(--ink);
+    display: flex;
+    gap: 1rem;
+    align-items: baseline;
+  }
+
+  h2 .num {
+    font-family: var(--f-mono);
+    font-size: .8rem;
+    font-weight: 500;
+    color: var(--accent-deep);
+    letter-spacing: .08em;
+    flex: none;
+    padding-top: .35rem;
+  }
+
+  h3 {
+    font-family: var(--f-body);
+    font-weight: 600;
+    font-size: 1.08rem;
+    line-height: 1.4;
+    letter-spacing: .005em;
+    margin: 2.25rem 0 .85rem;
+    color: var(--ink);
+  }
+
+  h3 .num {
+    font-family: var(--f-mono);
+    font-size: .85em;
+    color: var(--ink-3);
+    margin-right: .5rem
+  }
+
+  p {
+    margin: 0 0 1.15rem;
+    text-wrap: pretty
+  }
+
+  a {
+    color: var(--accent-deep);
+    text-decoration: underline;
+    text-underline-offset: .18em;
+    text-decoration-thickness: 1px
+  }
+
+  a:hover {
+    text-decoration-thickness: 2px
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px
+  }
+
+  strong {
+    font-weight: 600
+  }
+
+  em {
+    font-style: italic
+  }
+
+  ul {
+    margin: 0 0 1.3rem;
+    padding-left: 1.15rem
+  }
+
+  li {
+    margin-bottom: .6rem
+  }
+
+  li::marker {
+    color: var(--rule-strong)
+  }
+
+  code {
+    font-family: var(--f-mono);
+    font-size: .86em;
+    background: var(--code-bg);
+    padding: .12em .34em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  /* ── lede paragraph ───────────────────────────────────── */
+  .lede {
+    font-family: var(--f-display);
+    font-size: 1.24rem;
+    line-height: 1.62;
+    color: var(--ink);
+    border-left: 3px solid var(--accent);
+    padding-left: 1.15rem;
+    margin-bottom: 1.6rem;
+  }
+
+  /* ── tables ───────────────────────────────────────────── */
+  .tablewrap {
+    overflow-x: auto;
+    margin: 0 0 1.75rem;
+    border: 1px solid var(--rule);
+    background: var(--surface)
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .9rem;
+    line-height: 1.5
+  }
+
+  th,
+  td {
+    text-align: left;
+    padding: .7rem .85rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top
+  }
+
+  thead th {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    font-weight: 500;
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none
+  }
+
+  td.num,
+  th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap
+  }
+
+  tr.hl td {
+    background: var(--quote-bg);
+    font-weight: 500
+  }
+
+  caption {
+    caption-side: bottom;
+    text-align: left;
+    padding: .7rem .85rem;
+    font-size: .78rem;
+    color: var(--ink-3);
+    border-top: 1px solid var(--rule)
+  }
+
+  /* ── figures & diagrams ───────────────────────────────── */
+  figure {
+    margin: 0 0 2rem
+  }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%
+  }
+
+  .figbody {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 1.75rem 1.5rem
+  }
+
+  figcaption {
+    font-size: .82rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    padding: .75rem .1rem 0;
+  }
+
+  figcaption b {
+    font-family: var(--f-mono);
+    font-size: .7rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    font-weight: 500;
+    margin-right: .5rem
+  }
+
+  /* ── quotes: EN original / VI translation ─────────────── */
+  .quote {
+    background: var(--quote-bg);
+    border-left: 3px solid var(--accent);
+    padding: 1.15rem 1.25rem .3rem;
+    margin: 0 0 .5rem;
+    font-size: .92rem;
+    line-height: 1.62;
+  }
+
+  .quote.vi {
+    border-left-color: var(--rule-strong);
+    margin-bottom: 1.75rem
+  }
+
+  .quote ul {
+    padding-left: 1.1rem;
+    margin-bottom: 0
+  }
+
+  .quote li {
+    margin-bottom: .75rem
+  }
+
+  .qlabel {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 .9rem;
+  }
+
+  /* ── code block ───────────────────────────────────────── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    padding: 1.1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.75rem;
+    font-family: var(--f-mono);
+    font-size: .8rem;
+    line-height: 1.6;
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit
+  }
+
+  .cmd {
+    color: var(--ink-2)
+  }
+
+  /* ── callout ──────────────────────────────────────────── */
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--accent);
+    padding: 1.3rem 1.35rem .3rem;
+    margin: 0 0 1.9rem;
+  }
+
+  .callout .qlabel {
+    color: var(--accent-deep)
+  }
+
+  /* ── bar chart ────────────────────────────────────────── */
+  .chart {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 1.5rem 1.35rem 1.1rem
+  }
+
+  .chart-title {
+    font-weight: 600;
+    font-size: .98rem;
+    margin: 0 0 .25rem
+  }
+
+  .chart-sub {
+    font-size: .82rem;
+    color: var(--ink-2);
+    margin: 0 0 1.5rem
+  }
+
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(7.5rem, auto) 1fr auto;
+    gap: .3rem 1rem;
+    align-items: center
+  }
+
+  .rlabel {
+    font-size: .84rem;
+    line-height: 1.3
+  }
+
+  .rlabel small {
+    display: block;
+    font-family: var(--f-mono);
+    font-size: .66rem;
+    color: var(--ink-3);
+    letter-spacing: .04em
+  }
+
+  .track {
+    position: relative;
+    height: 1.6rem;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center
+  }
+
+  .bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 0 3px 3px 0;
+    transition: filter .15s ease;
+  }
+
+  .row:hover .bar {
+    filter: brightness(1.12)
+  }
+
+  .bar.base {
+    background: var(--rule-strong)
+  }
+
+  .bval {
+    font-family: var(--f-mono);
+    font-size: .82rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .rmeta {
+    grid-column: 2 / -1;
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    color: var(--ink-3);
+    letter-spacing: .03em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .axis {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1.1rem;
+    padding-top: .5rem;
+    border-top: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: .66rem;
+    color: var(--ink-3);
+  }
+
+  /* ── verdict chips ────────────────────────────────────── */
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem;
+    margin: 0 0 1.6rem
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    letter-spacing: .04em;
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    padding: .4rem .7rem;
+  }
+
+  .dot {
+    width: .55rem;
+    height: .55rem;
+    flex: none;
+    border-radius: 50%
+  }
+
+  .dot.tp {
+    background: var(--tp)
+  }
+
+  .dot.fp {
+    background: var(--fp)
+  }
+
+  .dot.nmd {
+    background: var(--nmd)
+  }
+
+  /* ── footer ───────────────────────────────────────────── */
+  .refs {
+    font-size: .85rem;
+    line-height: 1.6;
+    color: var(--ink-2)
+  }
+
+  .refs ol {
+    padding-left: 1.4rem;
+    margin: 0
+  }
+
+  .refs li {
+    margin-bottom: .7rem
+  }
+
+  .refs a {
+    word-break: break-all
+  }
+
+  .signoff {
+    font-family: var(--f-mono);
+    font-size: .75rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    padding: 2rem 0;
+    border-top: 2px solid var(--ink);
+    margin-top: 2rem;
+  }
+
+  .colophon {
+    font-size: .78rem;
+    color: var(--ink-3);
+    padding: 0 0 5rem;
+    line-height: 1.6
+  }
+
+  @media (max-width:640px) {
+    body {
+      font-size: 1rem
+    }
+
+    .masthead {
+      padding-top: 2.75rem
+    }
+
+    h2 {
+      padding-top: 1.75rem;
+      margin-top: 1.75rem;
+      flex-direction: column;
+      gap: .35rem
+    }
+
+    h2 .num {
+      padding-top: 0
+    }
+
+    .row {
+      grid-template-columns: 1fr
+    }
+
+    .rmeta {
+      grid-column: 1
+    }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    * {
+      transition: none !important;
+      animation: none !important
+    }
+  }
+</style>
+
+<article class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">VinSOC Research · Application Security</p>
+    <h1>Truy tìm lỗ hổng thật giữa hàng trăm cảnh báo SAST</h1>
+    <p class="dek">Quét xong 400 cảnh báo thì chỉ khoảng 30 cảnh báo là lỗ hổng thật — chi phí lớn nhất không nằm ở thời
+      gian quét, mà ở công sức phân tích cảnh báo. Đây là cách VulnHunterX dùng bộ <em>guided questions</em> để một LLM
+      — kể cả model nhỏ chạy local — tự thẩm định các cảnh báo nn ninh bảo mật.</p>
+    <p class="byline">
+      <span>VinSOC Research Team</span>
+      <span>23/08/2026</span>
+      <span>MIT · github.com/vinsoc-cyber/VulnHunterX</span>
+    </p>
+  </header>
+
+  <div class="stats wide">
+    <div class="stat"><b>37,7%</b><span>Precision của SAST thô trên OWASP BenchmarkPython</span></div>
+    <div class="stat"><b>87,3%</b><span>Precision sau khi qua verification, recall vẫn 98,2%</span></div>
+    <div class="stat"><b>397</b><span>Template câu hỏi dẫn dắt trên 7 ngôn ngữ</span></div>
+    <div class="stat"><b>0 USD</b><span>Chi phí API khi chạy model local, vẫn cắt 68,5% cảnh báo giả</span></div>
+  </div>
+
+  <!-- ═══ 1 ═══ -->
+  <section>
+    <h2><span class="num">01</span> Giới thiệu</h2>
+
+    <p class="lede">Mọi engine SAST hiện đại đều hoạt động theo nguyên tắc over-approximation: chúng đánh dấu
+      <em>mọi</em> điểm trong chương trình mà dữ liệu do kẻ tấn công kiểm soát <em>có thể</em> chạm tới, bởi vì lựa chọn
+      còn lại — im lặng bỏ qua — đồng nghĩa với việc để lọt lỗ hổng thật. Đây là một quyết định thiết kế đúng, nhưng nó
+      đẩy toàn bộ chi phí sang phía con người.
+    </p>
+
+    <p>Con số cụ thể từ các bộ dữ liệu có ground-truth: trên OWASP BenchmarkPython, nếu coi mọi cảnh báo SAST là thật
+      thì precision chỉ đạt <strong>37,7%</strong> — gần hai phần ba khối lượng triage là công vô ích. Trên bộ Juliet
+      C/C++ 1.3.1, tỉ lệ này là <strong>50%</strong>. Trên bộ hồi quy nội bộ của VulnHunterX gồm 125 finding từ bốn ứng
+      dụng cố tình chứa lỗi, con số là <strong>70%</strong>.</p>
+
+    <p>Phản ứng phổ biến hiện nay là ném cảnh báo cho một LLM và hỏi <em>"đây có phải lỗ hổng thật không?"</em>. Cách
+      làm này tạo ra một câu trả lời rất tự tin nhưng về bản chất là tung đồng xu, vì mô hình không có đủ dữ kiện để trả
+      lời — và quan trọng hơn, không ai kiểm chứng được nó đã suy luận dựa trên cái gì.</p>
+
+    <p>Bài viết này mô tả cách VulnHunterX giải bài toán đó: không phải bằng một mô hình mạnh hơn, mà bằng cách
+      <strong>bắt mô hình trả lời một bộ câu hỏi có cấu trúc, gắn với từng loại lỗi cụ thể, trước khi được phép đưa ra
+        kết luận</strong> — hiện thực hóa phương pháp luận <em>Vulnhalla</em>.
+    </p>
+  </section>
+
+  <!-- ═══ 2 ═══ -->
+  <section>
+    <h2><span class="num">02</span> Vì sao xác định một cảnh báo là thật lại khó đến vậy</h2>
+
+    <h3><span class="num">2.1</span> Một cảnh báo SAST là một mảnh ghép thiếu ngữ cảnh</h3>
+
+    <p>Cái mà SAST trả về trong file SARIF thường chỉ gồm: rule id, đường dẫn file, số dòng, mức độ nghiêm trọng, một
+      đoạn message, và nếu may mắn thì một chuỗi các bước dataflow từ source tới sink. Trong khi đó, để kết luận một
+      cảnh báo là thật, người triage cần biết:</p>
+
+    <ul>
+      <li><strong>Định nghĩa của hàm chứa dòng bị đánh dấu</strong> — dòng đó nằm trong nhánh nào, có được bảo vệ bởi
+        điều kiện nào không (control flow).</li>
+      <li><strong>Toàn bộ lời gọi tới hàm đó</strong> — biến đầu vào thực sự đến từ đâu, có bao nhiêu đường vào, đường
+        nào là attacker-controlled.</li>
+      <li><strong>Thân của các hàm được gọi</strong> — sink thật thường nằm sâu hai ba lớp, và một hàm helper tên vô hại
+        hoàn toàn có thể là nơi thực thi lệnh.</li>
+      <li><strong>Định nghĩa kiểu dữ liệu</strong> — struct, class, typedef, enum. Kích thước một buffer nằm trong định
+        nghĩa struct chứ không nằm ở dòng bị cảnh báo.</li>
+      <li><strong>Khai báo biến toàn cục và macro</strong> — một <code>#define MAX_LEN 64</code> có thể là toàn bộ câu
+        trả lời cho một cảnh báo buffer overflow.</li>
+      <li><strong>Vòng đời của con trỏ</strong> — với use-after-free, cần biết <em>mọi</em> vị trí
+        <code>free()</code>/<code>delete</code>/destructor trên toàn repo, không chỉ vị trí gần nhất.
+      </li>
+      <li><strong>Luồng dữ liệu</strong> — source, các phép biến đổi trung gian, và sink; kèm câu hỏi mỗi phép biến đổi
+        đó có phải là sanitizer hợp lệ hay không.</li>
+    </ul>
+
+    <p>Một cửa sổ 40 dòng code quanh vị trí cảnh báo — thứ mà đa số công cụ "LLM triage" đưa vào prompt — gần như không
+      bao giờ chứa đủ những thông tin trên.</p>
+
+    <h3><span class="num">2.2</span> Ví dụ: khi mô hình đúng về dữ kiện nhưng sai về kết luận</h3>
+
+    <p>Đây là một cảnh báo <code>php/tainted-filename</code> thật, tại <code>instructions.php:26</code> của DVWA. Một mô
+      hình yếu, chạy một lượt, không có khả năng xin thêm ngữ cảnh, đã trả lời như sau (nguyên văn tiếng Anh do mô hình
+      sinh ra):</p>
+
+    <div class="quote">
+      <p class="qlabel">Answer sheet · nguyên văn</p>
+      <ul>
+        <li><em>"The potentially dangerous data originates from the <code>$_GET['doc']</code> superglobal, which is user
+            input (line 26)."</em></li>
+        <li><em>"The data flows through <code>$selectedDocId</code> (line 27), then into <code>$readFile</code> via
+            <code>$docs[$selectedDocId]['file']</code> (line 31)."</em></li>
+        <li><em>"There is a check using <code>array_key_exists()</code> to ensure that <code>$selectedDocId</code>
+            exists in the <code>$docs</code> array (line 28-29). However, this only restricts the key to those defined
+            in <code>$docs</code>, not the actual file path."</em></li>
+      </ul>
+    </div>
+
+    <div class="quote vi">
+      <p class="qlabel">Tạm dịch</p>
+      <ul>
+        <li><em>"Dữ liệu nguy hiểm bắt nguồn từ superglobal <code>$_GET['doc']</code>, tức là input của người dùng (dòng
+            26)."</em></li>
+        <li><em>"Dữ liệu chảy qua <code>$selectedDocId</code> (dòng 27), rồi vào <code>$readFile</code> thông qua
+            <code>$docs[$selectedDocId]['file']</code> (dòng 31)."</em></li>
+        <li><em>"Có một kiểm tra bằng <code>array_key_exists()</code> để đảm bảo <code>$selectedDocId</code> tồn tại
+            trong mảng <code>$docs</code> (dòng 28-29). Tuy nhiên, kiểm tra này chỉ giới hạn key trong số các key đã
+            định nghĩa ở <code>$docs</code>, chứ không giới hạn đường dẫn file thực tế."</em></li>
+      </ul>
+    </div>
+
+    <p>Kết luận của nó: <strong>True Positive</strong>, độ tin cậy cao. Ground-truth: <strong>không phải lỗ
+        hổng</strong>.</p>
+
+    <p>Điều đáng nói là mô hình <strong>không sai về bất kỳ dữ kiện nào</strong>. Nó xác định đúng source, đúng luồng dữ
+      liệu, đúng vị trí và bản chất của phép kiểm tra. Nó chỉ sai ở bước cuối: <code>array_key_exists()</code> quả thật
+      chỉ giới hạn key — nhưng điều đó vô hại, bởi vì toàn bộ giá trị trong mảng <code>$docs</code> là literal được
+      hardcode. Thông tin quyết định nằm ở <strong>định nghĩa của mảng <code>$docs</code></strong>, thứ không xuất hiện
+      trong cửa sổ 40 dòng.</p>
+  </section>
+
+  <figure class="wide">
+    <div class="figbody">
+      <svg viewBox="0 0 960 340" role="img" aria-label="Dữ kiện quyết định — định nghĩa mảng docs toàn giá trị hardcode — nằm ngoài cửa sổ 40 dòng gửi cho mô hình, nên mô hình kết luận True Positive sai; khi xin thêm định nghĩa mảng thì kết luận đúng là False Positive.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="JetBrains Mono, ui-monospace, monospace" fill="currentColor">
+          <text x="20" y="38" font-size="10.5" letter-spacing="1.2" opacity=".72">CỬA SỔ 40 DÒNG GỬI CHO MÔ HÌNH</text>
+          <rect x="20" y="50" width="470" height="196" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".5"/>
+          <rect x="44" y="70" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="88" font-size="11.5">$_GET['doc']</text>
+          <text x="58" y="103" font-size="9.5" opacity=".7">dòng 26 · SOURCE</text>
+          <rect x="44" y="126" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="144" font-size="11.5">$selectedDocId</text>
+          <text x="58" y="159" font-size="9.5" opacity=".7">dòng 27 · TRANSFORM</text>
+          <rect x="44" y="182" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="200" font-size="11.5">readfile(...)</text>
+          <text x="58" y="215" font-size="9.5" opacity=".7">dòng 31 · SINK</text>
+          <line x1="142" y1="110" x2="142" y2="122" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <line x1="142" y1="166" x2="142" y2="178" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <rect x="276" y="126" width="200" height="40" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4"/>
+          <text x="290" y="144" font-size="11.5">array_key_exists()</text>
+          <text x="290" y="159" font-size="9.5" opacity=".7">dòng 28–29 · GUARD?</text>
+          <line x1="240" y1="146" x2="272" y2="146" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <text x="600" y="100" font-size="10.5" letter-spacing="1.2" style="fill:var(--accent)">DỮ KIỆN QUYẾT ĐỊNH — NẰM NGOÀI CỬA SỔ</text>
+          <rect x="600" y="112" width="340" height="88" fill="none" style="stroke:var(--accent)" stroke-width="1.8"/>
+          <text x="616" y="136" font-size="10.5" style="fill:var(--accent)">$docs = [</text>
+          <text x="616" y="152" font-size="10.5" style="fill:var(--accent)">  'a' => ['file' => 'README.txt'],</text>
+          <text x="616" y="168" font-size="10.5" style="fill:var(--accent)">  'b' => ['file' => 'PHP-info.txt'] ]</text>
+          <text x="616" y="189" font-size="9.5" style="fill:var(--accent)" opacity=".85">dòng 12 · giá trị đều là literal hardcode</text>
+          <line x1="494" y1="156" x2="596" y2="156" style="stroke:var(--accent)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arA)"/>
+          <text x="500" y="148" font-size="9.0" style="fill:var(--accent)">struct: / global:</text>
+          <line x1="20" y1="276" x2="940" y2="276" stroke="currentColor" stroke-width="1" opacity=".28"/>
+          <circle cx="28" cy="302" r="6" style="fill:var(--tp)"/>
+          <text x="44" y="300" font-size="11.5">Không xin thêm ngữ cảnh → <tspan style="fill:var(--tp)">True Positive</tspan>, High</text>
+          <text x="44" y="318" font-size="9.5" opacity=".7">dữ kiện đúng, kết luận sai — ground truth nói không phải lỗ hổng</text>
+          <circle cx="508" cy="302" r="6" style="fill:var(--fp)"/>
+          <text x="524" y="300" font-size="11.5">Xin định nghĩa mảng → <tspan style="fill:var(--fp)">False Positive</tspan>, High</text>
+          <text x="524" y="318" font-size="9.5" opacity=".7">khớp với ground truth</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Hình 1</b> Khoảng cách giữa "dữ kiện đúng" và "kết luận đúng" nằm ở một mảnh ngữ cảnh cách đó 14
+      dòng. Cách lấp không phải là đổi sang mô hình đắt tiền hơn, mà là cho mô hình quyền xin đúng mảnh ngữ cảnh nó đang
+      thiếu.</figcaption>
+  </figure>
+
+  <!-- ═══ 3 ═══ -->
+  <section>
+    <h2><span class="num">03</span> Kiến trúc của VulnHunterX</h2>
+
+    <p>VulnHunterX không phải là một detector mới. Nó nằm <em>phía sau</em> các detector, nhận SARIF của chúng, và quyết
+      định cảnh báo nào đáng để một con người bỏ thời gian ra đọc.</p>
+  </section>
+
+  <figure class="wide">
+    <div class="figbody">
+      <svg viewBox="0 0 960 280" role="img" aria-label="Pipeline bốn giai đoạn: prepare sinh CodeQL database và kho CSV ngữ cảnh; analyze sinh SARIF; verify đọc SARIF và gọi LLM, mỗi lượt lấy thêm ngữ cảnh từ kho CSV; report gộp thành báo cáo Markdown.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="JetBrains Mono, ui-monospace, monospace" fill="currentColor">
+          <text x="24" y="36" font-size="10.5" letter-spacing="1.2" opacity=".72">GIAI ĐOẠN CHÍNH</text>
+          <rect x="24" y="58" width="176" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="40" y="84" font-size="12.5">1 · prepare</text>
+          <text x="40" y="103" font-size="9.5" opacity=".72">clone · CodeQL DB · CSV</text>
+          <rect x="270" y="58" width="190" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="286" y="84" font-size="12.5">2 · analyze</text>
+          <text x="286" y="103" font-size="9.5" opacity=".72">CodeQL · Semgrep · OpenGrep</text>
+          <rect x="530" y="58" width="200" height="62" fill="none" style="stroke:var(--accent)" stroke-width="2.0"/>
+          <text x="546" y="84" font-size="12.5" style="fill:var(--accent)">3 · verify</text>
+          <text x="546" y="103" font-size="9.5" style="fill:var(--accent)" opacity=".85">guided questions · multi-turn</text>
+          <rect x="790" y="58" width="150" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="806" y="84" font-size="12.5">4 · report</text>
+          <text x="806" y="103" font-size="9.5" opacity=".72">Markdown EN/VI</text>
+          <line x1="200" y1="89" x2="266" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="204" y="80" font-size="9.0" opacity=".72">source</text>
+          <line x1="460" y1="89" x2="526" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="464" y="80" font-size="9.0" opacity=".72">SARIF</text>
+          <line x1="730" y1="89" x2="786" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="734" y="80" font-size="9.0" opacity=".72">verdict</text>
+          <text x="24" y="168" font-size="10.5" letter-spacing="1.2" opacity=".72">THÀNH PHẦN PHỤC VỤ</text>
+          <rect x="24" y="180" width="430" height="74" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <text x="40" y="204" font-size="12.0">Kho ngữ cảnh (CSV)</text>
+          <text x="40" y="223" font-size="9.5" opacity=".72">functions · callers · structs · globals · macros · free_sites …</text>
+          <text x="40" y="240" font-size="9.5" opacity=".72">CodeQL query, hoặc tree-sitter khi không dựng được database</text>
+          <line x1="112" y1="120" x2="112" y2="176" stroke="currentColor" stroke-width="1.4" marker-end="url(#arN)"/>
+          <text x="120" y="152" font-size="9.0" opacity=".72">ghi 1 lần</text>
+          <rect x="700" y="180" width="240" height="74" fill="none" style="stroke:var(--accent)" stroke-width="1.5"/>
+          <text x="716" y="204" font-size="12.0" style="fill:var(--accent)">LLM (LiteLLM)</text>
+          <text x="716" y="223" font-size="9.5" style="fill:var(--accent)" opacity=".85">OpenAI · Anthropic · Gemini</text>
+          <text x="716" y="240" font-size="9.5" style="fill:var(--accent)" opacity=".85">DeepSeek · Ollama (local / cloud)</text>
+          <path d="M454,214 L560,214 L560,126" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="462" y="232" font-size="9.5" style="fill:var(--accent)">đọc theo yêu cầu</text>
+          <path d="M660,124 L660,200 L696,200" fill="none" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#arA)"/>
+          <path d="M700,232 L620,232 L620,126" fill="none" style="stroke:var(--accent)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arA)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Hình 2</b> Điểm không hiển nhiên của kiến trúc: kho CSV do <code>prepare</code> sinh ra
+      <em>không</em> phục vụ giai đoạn <code>analyze</code>, mà phục vụ <code>verify</code> — mỗi lần mô hình xin thêm
+      ngữ cảnh là một lần đọc kho này, nên chi phí mở rộng ngữ cảnh là chi phí đọc file, không phải chi phí chạy lại
+      phân tích tĩnh.
+    </figcaption>
+  </figure>
+
+  <section>
+    <h3><span class="num">3.1</span> Bộ guided questions theo từng loại lỗi</h3>
+
+    <p>Đây là thành phần cốt lõi. Thay vì một prompt chung chung, mỗi <code>ruleId</code> trong SARIF được định tuyến
+      tới một bộ câu hỏi riêng. Hiện tại VulnHunterX có <strong>397 template câu hỏi</strong>, phân bố trên 7 bộ theo
+      ngôn ngữ (C/C++ 62, Python 67, Java 59, JavaScript 57, Go 54, PHP 52, C# 45) cộng một bộ fallback.</p>
+
+    <p><strong>Bước 1 — chọn đúng bộ câu hỏi cho cảnh báo.</strong> Mỗi engine SAST đặt tên rule một kiểu, nên hệ thống
+      thử theo hai nhóm — khớp theo tên rule trước, khớp theo CWE sau — và dừng lại ở cách đầu tiên thành công.</p>
+  </section>
+
+  <figure class="wide">
+    <div class="figbody">
+      <svg viewBox="0 0 960 320" role="img" aria-label="Định tuyến hai nhóm: thử khớp theo tên rule trước (bốn biến thể), không khớp thì thử khớp theo CWE qua bảng 124 entry, trượt cả hai thì dùng bộ câu hỏi generic.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="JetBrains Mono, ui-monospace, monospace" fill="currentColor">
+          <rect x="20" y="48" width="230" height="58" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="36" y="74" font-size="12.0">Finding từ SARIF</text>
+          <text x="36" y="93" font-size="9.5" opacity=".72">ruleId + metadata.cwe</text>
+          <rect x="300" y="26" width="380" height="88" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <text x="318" y="50" font-size="12.5">1 · Khớp theo TÊN RULE</text>
+          <text x="318" y="72" font-size="9.5" opacity=".72">4 biến thể: chính xác · chuẩn hoá · tiền tố · cùng ngôn ngữ</text>
+          <text x="318" y="96" font-size="10.5">cpp/use-after-free  →  bộ cpp/use-after-free</text>
+          <rect x="300" y="150" width="380" height="88" fill="none" style="stroke:var(--accent)" stroke-width="2.0"/>
+          <text x="318" y="174" font-size="12.5" style="fill:var(--accent)">2 · Khớp theo CWE</text>
+          <text x="318" y="196" font-size="9.5" style="fill:var(--accent)" opacity=".8">khi tên rule không khớp bộ nào — 124 entry ánh xạ</text>
+          <text x="318" y="220" font-size="10.5" style="fill:var(--accent)">CWE-98  →  file-inclusion  →  bộ php/file-inclusion</text>
+          <rect x="300" y="268" width="380" height="36" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity=".65"/>
+          <text x="318" y="291" font-size="10.5" opacity=".72">3 · Trượt cả hai → bộ câu hỏi generic</text>
+          <rect x="730" y="48" width="210" height="190" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="748" y="130" font-size="12.5">Bộ câu hỏi của</text>
+          <text x="748" y="150" font-size="12.5">đúng loại lỗi</text>
+          <text x="748" y="174" font-size="9.5" opacity=".72">397 template · 7 ngôn ngữ</text>
+          <line x1="250" y1="76" x2="296" y2="76" stroke="currentColor" stroke-width="1.6" marker-end="url(#arN)"/>
+          <path d="M276,106 L276,194 L296,194" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arN)"/>
+          <path d="M276,238 L276,286 L296,286" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity=".65" marker-end="url(#arN)"/>
+          <text x="150" y="130" font-size="9.5" opacity=".72">không khớp</text>
+          <text x="150" y="262" font-size="9.5" opacity=".65">không khớp</text>
+          <line x1="680" y1="70" x2="726" y2="70" stroke="currentColor" stroke-width="1.6" marker-end="url(#arN)"/>
+          <line x1="680" y1="194" x2="726" y2="194" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Hình 3</b> Nhóm thứ hai quan trọng nhất về mặt vận hành: nó cho phép mọi rule tự viết dùng được bộ
+      câu hỏi có sẵn mà không cần sửa code. Query CodeQL chỉ cần khai báo <code>@id cpp/my-rule</code>; rule Semgrep chỉ
+      cần khai báo <code>metadata.cwe</code>. Bảng ánh xạ hiện có 124 entry CWE.</figcaption>
+  </figure>
+
+  <section>
+    <p><strong>Bước 2 — bộ câu hỏi được thiết kế như thế nào.</strong> Điểm mấu chốt là các câu hỏi này <strong>không
+        hỏi "đây có phải lỗ hổng không"</strong>. Chúng được xếp theo một trình tự cố định: neo mô hình vào đúng dòng
+      code, ép nó thu thập dữ kiện có tọa độ kiểm chứng được, rồi mới đưa ra quy tắc kết luận. Bộ
+      <code>cpp/use-after-free</code> gồm 10 câu, chia thành bốn nhóm.
+    </p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th>Nhóm câu hỏi</th>
+            <th>Nhiệm vụ</th>
+            <th>Sai lầm điển hình mà nó chặn</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Câu 1</strong><br>neo</td>
+            <td>Trích nguyên văn câu lệnh tại dòng bị đánh dấu, nêu tên hàm chứa nó, phân loại dòng đó là lần dùng con
+              trỏ, lời gọi free, hay chỉ là một khai báo hàm</td>
+            <td>Mô hình bình luận chung chung về cả đoạn code thay vì về đúng dòng mà SAST cảnh báo</td>
+          </tr>
+          <tr>
+            <td><strong>Câu 2</strong><br>khoanh vùng</td>
+            <td>Khi đoạn code chứa nhiều hàm, xác định dòng bị đánh dấu thuộc hàm nào và chỉ suy luận về hàm đó</td>
+            <td>Kết tội chỉ vì bên cạnh có một hàm trông giống mẫu UAF hoặc có tên gợi ý là hàm lỗi</td>
+          </tr>
+          <tr>
+            <td><strong>Câu 3–4</strong><br>thu thập dữ kiện</td>
+            <td>Truy nơi con trỏ được cấp phát; liệt kê <strong>mọi</strong> lời gọi free/delete kèm tên hàm, file và số
+              dòng; đánh dấu free nào nằm trong nhánh có điều kiện</td>
+            <td>Kết luận dựa trên cảm giác, không có tọa độ nào để người review kiểm chứng lại</td>
+          </tr>
+          <tr>
+            <td><strong>Câu 5–9</strong><br>kiểm tra phòng vệ</td>
+            <td>Con trỏ có được gán NULL sau free không; đường điều khiển ngắn nhất từ free tới lần dùng; con trỏ có
+              thoát khỏi hàm không; có alias nào trỏ cùng vùng nhớ không; có được gán lại giữa chừng không</td>
+            <td>Bỏ sót đúng những lý do khiến một mẫu UAF nhìn thì đáng ngờ nhưng thực tế vô hại</td>
+          </tr>
+          <tr class="hl">
+            <td><strong>Câu 10</strong><br>quy tắc kết luận</td>
+            <td>Quy định điều kiện tối thiểu để kết luận TP (nêu được bộ ba: vị trí free, vị trí dùng, đường điều khiển
+              nối chúng) và bằng chứng bắt buộc để kết luận FP (gán NULL, cấp phát lại, nhánh không thể chạm tới, hoặc
+              dòng bị đánh dấu chỉ là khai báo)</td>
+            <td>Mô hình đoán bừa khi thiếu dữ kiện, thay vì trả về <code>NEEDS_MORE_DATA</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p class="qlabel">Vì sao điều này quan trọng</p>
+      <p>Chính cấu trúc trên là lý do một mô hình nhỏ vẫn dùng được: nó không phải tự nghĩ ra cần kiểm tra những gì,
+        cũng không tự đặt ra ngưỡng để kết luận — cả hai thứ đó đã nằm sẵn trong prompt. Việc còn lại của mô hình là đọc
+        code và trả lời.</p>
+    </div>
+
+    <p>Dưới đây là bốn câu đầu, trích nguyên văn tiếng Anh như được nạp vào prompt từ
+      <code>config/prompts/cpp_questions.yaml</code>:
+    </p>
+
+    <div class="quote">
+      <p class="qlabel">Guided questions · nguyên văn</p>
+      <ul>
+        <li><em>"ANCHOR FIRST: quote the EXACT statement at the flagged line. Name the function it lives in. Classify
+            the flagged line as one of: (a) a pointer USE (deref / read / write / pass-to-function), (b) a
+            free/delete/destructor call, (c) a function signature or declaration, (d) something else. If (c) or (d), the
+            SAST flag is suspect — record this and weight your verdict accordingly."</em></li>
+        <li><em>"If the snippet contains MULTIPLE functions (e.g. a vulnerable variant alongside a patched or test
+            variant, or a helper alongside its caller), identify which function the flagged line belongs to. Reason ONLY
+            about that function's behavior. Do NOT convict based on UAF patterns visible in sibling functions,
+            regardless of how those functions are named."</em></li>
+        <li><em>"Where is the pointer at the flagged line ALLOCATED (malloc, calloc, new, strdup, custom allocator)? If
+            allocation is in a DIFFERENT function, name that function — request 'caller:&lt;func&gt;' or
+            'all_callers:&lt;func&gt;' context if you cannot see it."</em></li>
+        <li><em>"List ALL free()/delete calls reachable from the flagged use — include the function name, file, and line
+            number for EACH. If you cannot enumerate them from the snippet, request 'free_sites:&lt;pointer_name&gt;'
+            context. Mark which frees are conditional (inside if/switch/error paths)."</em></li>
+      </ul>
+    </div>
+
+    <div class="quote vi">
+      <p class="qlabel">Tạm dịch</p>
+      <ul>
+        <li><em>"NEO ĐẦU TIÊN: trích nguyên văn câu lệnh tại dòng bị đánh dấu. Nêu tên hàm chứa nó. Phân loại dòng đó là
+            một trong các trường hợp: (a) một lần USE con trỏ (deref / đọc / ghi / truyền vào hàm), (b) một lời gọi
+            free/delete/destructor, (c) một signature hoặc khai báo hàm, (d) thứ khác. Nếu là (c) hoặc (d), cảnh báo của
+            SAST là đáng ngờ — hãy ghi nhận điều này và cân nhắc khi đưa ra verdict."</em></li>
+        <li><em>"Nếu đoạn code chứa NHIỀU hàm (ví dụ một biến thể có lỗi nằm cạnh một biến thể đã vá hoặc một biến thể
+            test, hoặc một hàm helper nằm cạnh hàm gọi nó), hãy xác định dòng bị đánh dấu thuộc hàm nào. Chỉ suy luận về
+            hành vi của hàm đó. KHÔNG kết tội dựa trên pattern UAF nhìn thấy ở các hàm anh em, bất kể các hàm đó được
+            đặt tên như thế nào."</em></li>
+        <li><em>"Con trỏ tại dòng bị đánh dấu được CẤP PHÁT ở đâu (malloc, calloc, new, strdup, allocator tự viết)? Nếu
+            việc cấp phát nằm ở hàm KHÁC, hãy nêu tên hàm đó — và yêu cầu ngữ cảnh <code>caller:&lt;func&gt;</code> hoặc
+            <code>all_callers:&lt;func&gt;</code> nếu bạn không nhìn thấy nó."</em></li>
+        <li><em>"Liệt kê TẤT CẢ các lời gọi free()/delete có thể chạm tới từ vị trí sử dụng bị đánh dấu — kèm tên hàm,
+            file và số dòng cho TỪNG cái. Nếu không liệt kê được từ đoạn code hiện có, hãy yêu cầu ngữ cảnh
+            <code>free_sites:&lt;pointer_name&gt;</code>. Đánh dấu những lời gọi free nào là có điều kiện (nằm trong
+            nhánh if/switch/xử lý lỗi)."</em></li>
+      </ul>
+    </div>
+
+    <p>Ngoài danh sách câu hỏi, mỗi bộ còn khai báo ba trường điều khiển hành vi của engine. Với
+      <code>cpp/use-after-free</code>:
+    </p>
+
+    <ul>
+      <li><code>additional_context: [free_sites, caller, all_callers, struct, callees, destructor, field_writes]</code>
+        — danh sách loại ngữ cảnh mà mô hình được phép xin thêm cho loại lỗi này.</li>
+      <li><code>context_hint</code> — gợi ý thứ tự xin: lấy <code>free_sites</code> của con trỏ trước, rồi mới tới nơi
+        con trỏ sinh ra, định nghĩa kiểu, và destructor của lớp sở hữu nó.</li>
+      <li><code>min_iterations: 3</code> — số vòng hội thoại tối thiểu, tức là mô hình <strong>không được phép</strong>
+        kết luận ngay ở lượt trả lời đầu tiên.</li>
+    </ul>
+
+    <h3><span class="num">3.2</span> Bắt trả lời trước, kết luận sau</h3>
+
+    <p>Bộ câu hỏi chỉ có tác dụng nếu mô hình bị <em>ép</em> trả lời hết trước khi được kết luận. Ràng buộc này nằm
+      trong system prompt, dưới dạng một quy trình sáu bước bắt buộc theo đúng thứ tự.</p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">Bước</th>
+            <th>Yêu cầu</th>
+            <th>Vì sao cần</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="num">0</td>
+            <td><strong>Định vị dòng bị đánh dấu</strong>: tìm theo số dòng trong khối code có đánh số, trích nguyên văn
+              nội dung dòng đó, xác nhận cấu trúc mà rule mô tả có thật sự nằm ở đó</td>
+            <td>Chặn kiểu suy luận về một đoạn code khác với đoạn mà SAST đang cảnh báo</td>
+          </tr>
+          <tr>
+            <td class="num">1</td>
+            <td><strong>Nhận diện lớp lỗ hổng</strong> từ rule id và mô tả</td>
+            <td>Chọn đúng khung suy luận</td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td><strong>Trả lời từng câu hỏi dẫn dắt</strong>, chỉ dựa trên code được cung cấp, có trích số dòng; nếu
+              không nhìn thấy thì phải ghi rõ <em>"Not visible in provided context"</em></td>
+            <td>Buộc mọi khẳng định phải có tọa độ kiểm chứng, và buộc thừa nhận khi thiếu dữ kiện</td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td><strong>Truy vết luồng dữ liệu</strong>: source → biến đổi/sanitizer → sink, liệt kê từng bước kèm số
+              dòng</td>
+            <td>Tách "có đường đi" khỏi "có vẻ nguy hiểm"</td>
+          </tr>
+          <tr>
+            <td class="num">4</td>
+            <td><strong>Đánh giá khả năng chạm tới và khai thác</strong> của đường đi đó</td>
+            <td>Một sink nguy hiểm trên nhánh không thể chạm tới thì không phải lỗ hổng</td>
+          </tr>
+          <tr class="hl">
+            <td class="num">5</td>
+            <td><strong>Chỉ đến lúc này</strong> mới được đưa ra verdict</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Ba nguyên tắc đi kèm quy trình này quan trọng không kém bản thân các câu hỏi:</p>
+
+    <ul>
+      <li><strong>Ngưỡng bằng chứng không đối xứng.</strong> Để kết luận <em>False Positive</em>, mô hình bắt buộc phải
+        chỉ ra một biện pháp phòng vệ <strong>cụ thể, nhìn thấy được</strong> trong code — một phép kiểm tra biên, một
+        lời gọi sanitizer, một bảo đảm của hệ thống kiểu, hay một cơ chế của framework. Nguyên văn ràng buộc trong
+        prompt: <em>"Absence of evidence of a vulnerability is NOT evidence of safety"</em> — không thấy dấu hiệu lỗ
+        hổng không có nghĩa là an toàn. Mô hình cũng bị cấm suy ra sự an toàn từ tên hàm hay từ các thuộc tính như
+        <code>static</code>, <code>__init</code>.
+      </li>
+      <li><strong>Không được nhìn thấy thì không được kết luận.</strong> Nếu dòng bị đánh dấu không có mặt trong đoạn
+        code được cung cấp, mô hình <strong>không được</strong> trả lời <em>False Positive</em> — nó phải trả về
+        <em>Needs More Data</em> và yêu cầu đúng phần code còn thiếu. Đây là ràng buộc chặn thẳng dạng lỗi tệ nhất của
+        LLM triage: bịa ra kết luận an toàn cho một dòng code mà nó chưa từng đọc.
+      </li>
+      <li><strong>Rule chỉ định vị sink, không quyết định lớp lỗi.</strong> Nếu sink bị đánh dấu thật sự khai thác được,
+        mô hình phải kết luận <em>True Positive</em> ngay cả khi lớp lỗ hổng thực tế khác với CWE ghi trong rule — và
+        phải gọi đúng tên lớp lỗi thật trong phần lập luận. Ngược lại, nó bị cấm "vay" một lỗi khác ở dòng khác để hợp
+        thức hóa cảnh báo đang xét.</li>
+    </ul>
+
+    <p>Prompt cũng dạy mô hình cách đọc metadata của rule cho đúng: <code>precision: high</code> nói lên độ tin cậy của
+      <strong>pattern</strong> trên toàn bộ corpus, không nói gì về việc <strong>trường hợp này</strong> có khai thác
+      được hay không; <code>security-severity</code> là mức nghiêm trọng trong kịch bản xấu nhất của rule, chỉ dùng để
+      sắp thứ tự ưu tiên đọc, không được dùng làm lý do nghiêng về True Positive.
+    </p>
+
+    <p>Kết quả của toàn bộ ràng buộc trên là một thay đổi về bản chất đầu ra: <strong>một verdict không kèm phiếu trả
+        lời là thứ không thể phản bác; một verdict kèm phiếu trả lời trong đó mỗi khẳng định đều trỏ vào một số dòng cụ
+        thể là thứ kỹ sư review được trong ba mươi giây</strong> — chỉ cần mở đúng ba số dòng được trích và đối chiếu.
+    </p>
+
+    <h3><span class="num">3.3</span> Mở rộng ngữ cảnh nhiều lượt</h3>
+
+    <p>Khi phát hiện mình thiếu dữ kiện, mô hình có thể yêu cầu thêm ngữ cảnh từ một bộ từ vựng cố định, và engine phục
+      vụ yêu cầu đó từ kho CSV.</p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th>Yêu cầu</th>
+            <th>Nội dung trả về</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>caller:</code> / <code>all_callers:</code></td>
+            <td>Code của hàm gọi / toàn bộ hàm gọi (tối đa 10)</td>
+          </tr>
+          <tr>
+            <td><code>function:</code> / <code>callees:</code> / <code>callee_bodies:</code></td>
+            <td>Thân hàm sink, danh sách hàm được gọi, và thân của chúng</td>
+          </tr>
+          <tr>
+            <td><code>struct:</code> / <code>typedef:</code> / <code>enum:</code></td>
+            <td>Định nghĩa kiểu dữ liệu, type alias, enum kèm giá trị</td>
+          </tr>
+          <tr>
+            <td><code>global:</code> / <code>macro:</code></td>
+            <td>Khai báo biến toàn cục, định nghĩa macro</td>
+          </tr>
+          <tr>
+            <td><code>free_sites:</code></td>
+            <td>Mọi vị trí free()/delete/destructor của một con trỏ trên toàn repo (C/C++)</td>
+          </tr>
+          <tr>
+            <td><code>destructor:</code> / <code>field_writes:</code></td>
+            <td>Thân destructor, mọi vị trí ghi vào một field (C/C++, phục vụ RAII và TOCTOU)</td>
+          </tr>
+          <tr>
+            <td><code>framework_sanitizers:</code> / <code>framework_guards:</code></td>
+            <td>Ranh giới validation và auth guard ở tầng framework (ví dụ <code>ValidationPipe</code>,
+              <code>APP_GUARD</code> của NestJS)
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <figure class="wide">
+    <div class="figbody">
+      <svg viewBox="0 0 960 320" role="img" aria-label="Vòng lặp multi-turn: engine dựng prompt, mô hình trả về envelope JSON; nếu còn xin ngữ cảnh hoặc chưa đủ số vòng tối thiểu thì ContextProvider tra kho CSV và lặp lại, ngược lại verdict được chốt.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="JetBrains Mono, ui-monospace, monospace" fill="currentColor">
+          <rect x="20" y="56" width="250" height="96" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="36" y="80" font-size="12.5">Prompt</text>
+          <text x="36" y="100" font-size="9.5" opacity=".75">finding + code có đánh số dòng</text>
+          <text x="36" y="118" font-size="9.5" opacity=".75">+ dataflow [SOURCE] → [SINK]</text>
+          <text x="36" y="136" font-size="9.5" opacity=".75">+ N câu hỏi dẫn dắt</text>
+          <rect x="330" y="56" width="200" height="96" fill="none" style="stroke:var(--accent)" stroke-width="1.8"/>
+          <text x="346" y="80" font-size="12.5" style="fill:var(--accent)">LLM</text>
+          <text x="346" y="100" font-size="9.5" style="fill:var(--accent)" opacity=".85">trả lời từng câu hỏi</text>
+          <text x="346" y="118" font-size="9.5" style="fill:var(--accent)" opacity=".85">truy vết luồng dữ liệu</text>
+          <text x="346" y="136" font-size="9.5" style="fill:var(--accent)" opacity=".85">sinh envelope JSON</text>
+          <line x1="270" y1="104" x2="326" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <path d="M700,52 L820,104 L700,156 L580,104 Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="700" y="99" font-size="10.0" text-anchor="middle">context_needed rỗng?</text>
+          <text x="700" y="116" font-size="10.0" text-anchor="middle">iterations ≥ min?</text>
+          <line x1="530" y1="104" x2="576" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <line x1="820" y1="104" x2="862" y2="104" stroke="currentColor" stroke-width="1.7" marker-end="url(#arN)"/>
+          <text x="826" y="95" font-size="9.5">CÓ</text>
+          <rect x="866" y="76" width="84" height="56" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <text x="880" y="100" font-size="11.0">Verdict</text>
+          <text x="880" y="118" font-size="9.5" opacity=".75">đã chốt</text>
+          <path d="M700,156 L700,212 L436,212" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="486" y="232" font-size="9.5" style="fill:var(--accent)">KHÔNG · ví dụ ["free_sites:buff1"]</text>
+          <rect x="226" y="190" width="210" height="44" fill="none" style="stroke:var(--accent)" stroke-width="1.6"/>
+          <text x="242" y="210" font-size="11.0" style="fill:var(--accent)">ContextProvider</text>
+          <text x="242" y="226" font-size="9.5" style="fill:var(--accent)" opacity=".85">tra kho CSV</text>
+          <path d="M226,212 L145,212 L145,158" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="20" y="258" font-size="9.5" style="fill:var(--accent)">ngữ cảnh mới nối vào hội thoại — mô hình trả lời lại toàn bộ câu hỏi</text>
+          <line x1="20" y1="278" x2="940" y2="278" stroke="currentColor" stroke-width="1" opacity=".28"/>
+          <text x="20" y="300" font-size="10.0" opacity=".72">Trên bộ hồi quy nội bộ: trung bình 2,49 lượt / finding · giới hạn trên đặt bằng max_iterations</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Hình 4</b> Hai điều kiện phải cùng thỏa mãn thì vòng lặp mới dừng: mô hình không xin thêm ngữ cảnh
+      <em>và</em> đã đi đủ số vòng tối thiểu của loại lỗi đó. Với use-after-free, <code>min_iterations: 3</code> nghĩa
+      là kết luận ở lượt đầu bị chặn ngay cả khi mô hình tự tin.
+    </figcaption>
+  </figure>
+
+  <section>
+    <p>Kèm theo đó, prompt luôn chứa <strong>đường đi dataflow do chính engine SAST trích ra</strong>, đã được gán nhãn
+      <code>[SOURCE]</code> / <code>[TRANSFORM]</code> / <code>[SINK]</code> cho từng bước. Đây là điểm quan trọng:
+      VulnHunterX không cố tự dựng lại DFG — nó tái sử dụng kết quả phân tích luồng dữ liệu vốn là thế mạnh của CodeQL,
+      rồi bổ sung phần mà SAST không cung cấp là call graph, định nghĩa kiểu, và vòng đời đối tượng.
+    </p>
+
+    <h3><span class="num">3.4</span> Đầu ra</h3>
+
+    <p>Mô hình không được trả lời tự do. Nó phải trả về một envelope JSON có cấu trúc chặt, và engine lưu mỗi finding
+      thành một file trong <code>output/&lt;lang&gt;/&lt;repo&gt;/verification_results/</code>. Envelope gồm bảy trường:
+    </p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th>Trường</th>
+            <th>Nội dung</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>answers[]</code></td>
+            <td>Phiếu trả lời — một phần tử cho mỗi câu hỏi dẫn dắt, có trích số dòng</td>
+          </tr>
+          <tr>
+            <td><code>data_flow</code></td>
+            <td>Luồng dữ liệu đã truy vết, dạng <code>source (dòng N) → transform (dòng M) → sink (dòng K)</code></td>
+          </tr>
+          <tr>
+            <td><code>verdict</code></td>
+            <td><code>True Positive</code> / <code>False Positive</code> / <code>Needs More Data</code></td>
+          </tr>
+          <tr>
+            <td><code>confidence</code></td>
+            <td><code>High</code> / <code>Medium</code> / <code>Low</code> — đúng một trong ba giá trị</td>
+          </tr>
+          <tr>
+            <td><code>confidence_score</code></td>
+            <td>Điểm 0.0–1.0; nếu mô hình không tự cho điểm, engine quy đổi từ mức định tính (High = 0.85, Medium = 0.6,
+              Low = 0.3)</td>
+          </tr>
+          <tr>
+            <td><code>reasoning</code></td>
+            <td>Một hai câu giải thích, phải tham chiếu về phiếu trả lời và luồng dữ liệu</td>
+          </tr>
+          <tr>
+            <td><code>context_needed[]</code></td>
+            <td>Danh sách ngữ cảnh còn thiếu, dùng để kích hoạt vòng hội thoại tiếp theo</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Bên cạnh phần do mô hình sinh, engine ghi thêm phần đo đạc của chính lần chạy đó: <code>iterations</code>,
+      <code>model</code>, <code>timestamp</code>, <code>elapsed_seconds</code>, <code>input_tokens</code> /
+      <code>output_tokens</code> / <code>cached_input_tokens</code>, và <code>cost_usd</code>. Nhờ vậy mọi con số chi
+      phí ở mục 4 đều truy ngược được về từng finding cụ thể, chứ không phải ước lượng.
+    </p>
+
+    <p>Dưới đây là một verdict thật, đã lược bớt metadata, cho cảnh báo <code>double-free</code> mà Semgrep báo tại
+      <code>dvcp.c:62</code>:
+    </p>
+
+    <pre><code>{
+  "finding": {
+    "rule_id": "c.lang.security.double-free.double-free",
+    "message": "Variable 'buff1' was freed twice...",
+    "file": "repos/c/dvcp/dvcp.c",
+    "start_line": 62,
+    "precision": "very-high",
+    "cwe_ids": ["CWE-415"],
+    "tool": "Semgrep"
+  },
+  "verdict": "False Positive",
+  "confidence": "Low",
+  "confidence_score": 0.55,
+  "reasoning": "The flagged free is in a different file/function than the
+     only other known free sites, and no control-flow path linking them is
+     provided. Without evidence of a prior free of the same memory in the
+     same execution context, the double-free claim is unsupported.",
+  "answers": [
+    "Flagged line: dvcp.c:62 `free(buff1);` — a free call.",
+    "Only the `if` block is shown; the containing function is unknown.",
+    "Only two free sites for buff1 listed: imgRead.c:59 and imgRead.c:62
+       (both in ProcessImage). The flagged free at dvcp.c:62 is not
+       accounted for in that list.",
+    "No code path shown that connects the flagged free to any other free.",
+    "No NULL assignment visible."
+  ],
+  "iterations": 3,
+  "model": "deepseek-v4-flash",
+  "input_tokens": 10324,
+  "output_tokens": 3654,
+  "cached_input_tokens": 6016
+}</code></pre>
+
+    <div class="quote vi">
+      <p class="qlabel">Tạm dịch phần reasoning</p>
+      <p style="margin:0 0 1.1rem"><em>"Lời gọi free bị đánh dấu nằm ở file và hàm khác với hai vị trí free duy nhất đã
+          biết, và không có đường điều khiển nào nối chúng lại. Khi chưa có bằng chứng rằng cùng vùng nhớ đó đã được
+          free trước đó trong cùng một ngữ cảnh thực thi, khẳng định double-free là không có cơ sở."</em></p>
+    </div>
+
+    <p>Bản ghi này minh họa đúng những gì mục 3.2 mô tả. Rule khai báo <code>precision: very-high</code>, nhưng mô hình
+      không lấy đó làm bằng chứng. Nó liệt kê được <strong>chính xác</strong> hai vị trí free đã biết kèm file và số
+      dòng, chỉ ra rằng dòng bị cảnh báo không nằm trong số đó, và hạ độ tin cậy xuống <code>Low</code> thay vì tuyên bố
+      chắc chắn — một tín hiệu đủ để người review biết đây là finding nên liếc qua trước khi đóng.</p>
+
+    <p>Ba giá trị verdict được dùng như sau trong thực tế vận hành:</p>
+
+    <div class="chips">
+      <span class="chip"><span class="dot tp"></span>True Positive</span>
+      <span class="chip"><span class="dot fp"></span>False Positive</span>
+      <span class="chip"><span class="dot nmd"></span>Needs More Data</span>
+    </div>
+
+    <ul>
+      <li><strong>True Positive</strong> — đưa vào hàng đợi xử lý, sắp thứ tự theo <code>confidence_score</code> và mức
+        nghiêm trọng.</li>
+      <li><strong>False Positive</strong> — đóng lại, nhưng phiếu trả lời vẫn được lưu để có thể kiểm toán lại về sau.
+        Đây là điểm khác biệt so với việc lọc bằng regex hay danh sách loại trừ: mỗi lần loại bỏ đều kèm lý do có tọa
+        độ.</li>
+      <li><strong>Needs More Data</strong> — trạng thái được giữ lại <strong>một cách có chủ đích</strong>. Một hệ thống
+        triage biết nói "tôi không đủ dữ kiện" hữu ích hơn hẳn một hệ thống luôn luôn trả lời, vì nó biến phần khó thành
+        một danh sách ngắn cần người xem, thay vì trộn phỏng đoán may rủi vào cùng một đống với các kết luận có căn cứ.
+        Trên bộ hồi quy nội bộ 125 finding, chỉ có <strong>một</strong> trường hợp rơi vào trạng thái này.</li>
+    </ul>
+
+    <p>Cuối cùng, giai đoạn <code>report</code> gom toàn bộ verdict thành một báo cáo Markdown song ngữ EN/VI gồm phần
+      tóm tắt cho quản lý và phần chi tiết từng finding kèm phiếu trả lời.</p>
+  </section>
+
+  <!-- ═══ 4 ═══ -->
+  <section>
+    <h2><span class="num">04</span> Kết quả thực nghiệm</h2>
+
+    <h3><span class="num">4.1</span> Bộ hồi quy nội bộ</h3>
+
+    <p>Bộ này gồm 125 finding từ bốn mục tiêu cố tình chứa lỗi — <strong>dvcp</strong> (C), <strong>dvwa</strong> (PHP),
+      <strong>insecure-coding-examples</strong> (C/C++), <strong>nodegoat</strong> (JavaScript) — với ground-truth dựng
+      thủ công: 88 lỗi thật, 37 cảnh báo giả.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="num">Precision</th>
+            <th class="num">Recall</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SAST thô (coi mọi cảnh báo là thật)</td>
+            <td class="num">70%</td>
+            <td class="num">100%</td>
+          </tr>
+          <tr class="hl">
+            <td><strong>VulnHunterX</strong></td>
+            <td class="num"><strong>92%</strong></td>
+            <td class="num"><strong>95%</strong></td>
+          </tr>
+        </tbody>
+        <caption>Chi phí cho toàn bộ 125 finding: 14,58 USD, tương đương 0,12 USD/finding, với tỉ lệ prompt-cache hit
+          69%.</caption>
+      </table>
+    </div>
+
+    <h3><span class="num">4.2</span> Guided questions đóng góp bao nhiêu</h3>
+
+    <p>Trên OWASP BenchmarkPython (300 case), khung benchmark so sánh bốn cách tiếp cận: <code>raw-sast</code> (không
+      LLM), <code>ablation-zero</code> (có LLM, không câu hỏi), <code>ablation-generic</code> (câu hỏi chung), và
+      <code>vulnhunterx</code> (guided questions theo rule).
+    </p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th>Cách tiếp cận</th>
+            <th>Model</th>
+            <th class="num">Precision</th>
+            <th class="num">Recall</th>
+            <th class="num">Giảm FP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>raw-sast</td>
+            <td>—</td>
+            <td class="num">37,7%</td>
+            <td class="num">100%</td>
+            <td class="num">0%</td>
+          </tr>
+          <tr>
+            <td>ablation-zero</td>
+            <td>DeepSeek</td>
+            <td class="num">77,3%</td>
+            <td class="num">96,5%</td>
+            <td class="num">82,9%</td>
+          </tr>
+          <tr>
+            <td>ablation-generic</td>
+            <td>DeepSeek</td>
+            <td class="num">81,1%</td>
+            <td class="num">94,7%</td>
+            <td class="num">86,6%</td>
+          </tr>
+          <tr class="hl">
+            <td><strong>vulnhunterx</strong></td>
+            <td>DeepSeek</td>
+            <td class="num"><strong>87,3%</strong></td>
+            <td class="num"><strong>98,2%</strong></td>
+            <td class="num"><strong>91,4%</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Đây là kết quả sạch nhất trong toàn bộ tập thí nghiệm: pipeline đầy đủ vượt cả hai ablation trên <strong>cả
+        precision lẫn recall</strong>, với mọi model được thử. Tổng hợp bốn bộ dữ liệu, với model mạnh nhất được thử, hệ
+      thống giảm false positive <strong>78,6%–91,4%</strong> trong khi vẫn giữ lại <strong>87,5%–98,2%</strong> số lỗi
+      thật.</p>
+
+    <h3><span class="num">4.3</span> Không cần LLM mạnh</h3>
+
+    <p>Đây là kết quả có giá trị thực tiễn cao nhất, vì nó quyết định chi phí vận hành. Cùng bộ OWASP BenchmarkPython,
+      cùng pipeline, chỉ thay model.</p>
+  </section>
+
+  <figure class="wide">
+    <div class="chart">
+      <p class="chart-title">Precision theo model — cùng pipeline, cùng dataset</p>
+      <p class="chart-sub">OWASP BenchmarkPython, 300 case. Recall và chi phí API thật ghi kèm mỗi dòng.</p>
+      <div class="rows">
+        <div class="row">
+          <div class="rlabel">SAST thô<small>không LLM</small></div>
+          <div class="track">
+            <div class="bar base" style="width:37.7%"></div>
+          </div>
+          <div class="bval">37,7%</div>
+          <div class="rmeta">recall 100% · 0 USD · mọi cảnh báo giữ nguyên</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">qwen3-coder<small>ollama · local</small></div>
+          <div class="track">
+            <div class="bar" style="width:65.3%;opacity:.62"></div>
+          </div>
+          <div class="bval">65,3%</div>
+          <div class="rmeta">recall 99,1% · 0 USD · giảm 68,5% FP</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">gpt-4.1-mini<small>api · model nhỏ</small></div>
+          <div class="track">
+            <div class="bar" style="width:82.7%;opacity:.82"></div>
+          </div>
+          <div class="bval">82,7%</div>
+          <div class="rmeta">recall 97,4% · 1,10 USD · giảm 87,7% FP</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">DeepSeek<small>api · model mạnh nhất thử</small></div>
+          <div class="track">
+            <div class="bar" style="width:87.3%"></div>
+          </div>
+          <div class="bval">87,3%</div>
+          <div class="rmeta">recall 98,2% · 0,40 USD · giảm 91,4% FP</div>
+        </div>
+      </div>
+      <div class="axis"><span>0%</span><span>50%</span><span>100% precision</span></div>
+    </div>
+    <figcaption><b>Hình 5</b> Một mô hình mini đưa precision từ 37,7% lên 82,7% và chỉ kém mô hình mạnh nhất 4,6 điểm.
+      Một mô hình chạy hoàn toàn local, chi phí API bằng 0, vẫn cắt hơn hai phần ba số cảnh báo giả trong khi giữ 99,1%
+      lỗ hổng thật.</figcaption>
+  </figure>
+
+  <section>
+    <p>Quan trọng hơn con số tuyệt đối là phần đóng góp của scaffolding đối với chính mô hình yếu. Với gpt-4.1-mini trên
+      cùng bộ dữ liệu: không có câu hỏi dẫn dắt → 64,0% precision; câu hỏi generic → 59,1%; guided questions theo rule →
+      <strong>82,7%</strong>. Bộ câu hỏi đúng loại lỗi mang lại cho mô hình nhỏ <strong>hơn 18 điểm precision</strong> —
+      nhiều hơn hẳn phần chênh lệch giữa nó và mô hình lớn.
+    </p>
+
+    <p>Kết quả trên bộ SecLLMHolmes cho thấy điều đó rõ hơn nữa khi quy về tiền:</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th class="num">Precision</th>
+            <th class="num">Recall</th>
+            <th class="num">Chi phí cả bộ</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>gpt-5</td>
+            <td class="num">78,4%</td>
+            <td class="num">85,9%</td>
+            <td class="num">16,75 USD</td>
+          </tr>
+          <tr>
+            <td>DeepSeek</td>
+            <td class="num">82,1%</td>
+            <td class="num">87,5%</td>
+            <td class="num">n/a</td>
+          </tr>
+          <tr>
+            <td>gpt-4.1-mini</td>
+            <td class="num">74,7%</td>
+            <td class="num">89,9%</td>
+            <td class="num">0,73 USD</td>
+          </tr>
+          <tr class="hl">
+            <td>qwen3-coder (local)</td>
+            <td class="num">70,5%</td>
+            <td class="num">87,8%</td>
+            <td class="num">0 USD</td>
+          </tr>
+        </tbody>
+        <caption>LiteLLM chưa có bảng giá cho DeepSeek nên harness ghi nhận 0 USD; chi phí thực tế thấp hơn gpt-5 một
+          hai bậc độ lớn.</caption>
+      </table>
+    </div>
+
+    <p>Mô hình local chỉ kém <code>gpt-5</code> <strong>7,9 điểm precision</strong> trong khi <code>gpt-5</code> tốn
+      16,75 USD cho cùng khối lượng công việc — và bản thân <code>gpt-5</code> cũng không phải model tốt nhất trong
+      bảng. Với đội bảo mật không được phép gửi source code ra ngoài, đây là điểm khác biệt giữa "dùng được" và "không
+      dùng được".</p>
+
+    <h3><span class="num">4.4</span> Nhưng ranh giới của kết luận đó nằm ở đâu</h3>
+
+    <p>Ưu thế của mô hình nhỏ không đồng đều giữa các lớp lỗi. Trên bộ Juliet C/C++ — vốn kiểm tra khả năng suy luận về
+      memory safety — gpt-4.1-mini chỉ giảm được <strong>23,9%</strong> false positive, trong khi DeepSeek đạt
+      <strong>82,2%</strong> trên cùng dataset và cùng pipeline. Hai lần chạy model local trên OWASP BenchmarkJava thì
+      abstain trên gần như toàn bộ finding — được ghi nhận là "giảm 100% FP" nhưng thực chất là một thất bại đội lốt
+      thành công, và các dòng này vẫn được giữ nguyên trong bảng so sánh công bố.
+    </p>
+
+    <div class="callout">
+      <p class="qlabel">Kết luận trung thực</p>
+      <p>Với các lớp lỗi web phổ biến — injection, path traversal, XSS, deserialization — một mô hình nhỏ hoặc local
+        cộng scaffolding tốt là đủ dùng trong sản xuất. Với suy luận về vòng đời bộ nhớ trong C/C++, scaffolding không
+        thay thế được năng lực mô hình.</p>
+    </div>
+
+    <p>Ngoài ra, guided questions không phải lúc nào cũng có lợi. Cũng trên Juliet, <code>ablation-generic</code>
+      (88,1%/98,9%) <em>vượt</em> pipeline đầy đủ (83,8%/93,8%) với DeepSeek. Cách lý giải của chúng tôi: các cặp hàm
+      <code>bad()</code>/<code>good()</code> tổng hợp của Juliet vốn đã tự chứa đủ ngữ cảnh, nên câu hỏi theo rule chỉ
+      làm prompt dài thêm mà không thêm tín hiệu, đôi khi còn khiến mô hình suy diễn quá mức trên một case hai dòng.
+      Guided questions phát huy giá trị trên code thật, nơi source và sink cách nhau nhiều lớp gọi hàm.
+    </p>
+  </section>
+
+  <!-- ═══ 5 ═══ -->
+  <section>
+    <h2><span class="num">05</span> Hỗ trợ đa ngôn ngữ: cả biên dịch lẫn thông dịch</h2>
+
+    <p>VulnHunterX hỗ trợ <strong>8 ngôn ngữ</strong>, phủ cả hai nhóm:</p>
+
+    <div class="tablewrap wide">
+      <table>
+        <thead>
+          <tr>
+            <th>Nhóm</th>
+            <th>Ngôn ngữ</th>
+            <th>Nguồn ngữ cảnh cho verification</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Biên dịch</td>
+            <td>C, C++</td>
+            <td>CodeQL DB — 14 query trích xuất: functions, callers, structs, globals, macros, enums, typedefs,
+              free_sites, destructors, field_writes…</td>
+          </tr>
+          <tr>
+            <td>Biên dịch</td>
+            <td>Java</td>
+            <td>CodeQL DB — functions, callers, classes</td>
+          </tr>
+          <tr>
+            <td>Biên dịch</td>
+            <td>Go, C#</td>
+            <td>CodeQL DB — functions, callers, classes</td>
+          </tr>
+          <tr>
+            <td>Thông dịch</td>
+            <td>Python</td>
+            <td>CodeQL DB — functions, callers, classes</td>
+          </tr>
+          <tr>
+            <td>Thông dịch</td>
+            <td>JavaScript</td>
+            <td>CodeQL DB — functions, callers, classes</td>
+          </tr>
+          <tr class="hl">
+            <td>Thông dịch</td>
+            <td>PHP</td>
+            <td>tree-sitter (khi không dựng được CodeQL database)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Điểm đáng chú ý về mặt kỹ thuật là <strong>cơ chế fallback</strong>: khi không dựng được CodeQL database — vì
+      ngôn ngữ không được hỗ trợ, vì build thất bại, hoặc vì repo thiếu toolchain — hệ thống chuyển sang trích xuất ngữ
+      cảnh bằng tree-sitter, vốn chỉ cần parse cú pháp chứ không cần biên dịch. Chất lượng ngữ cảnh thấp hơn (không có
+      call graph liên thủ tục chính xác), nhưng pipeline verification vẫn chạy được thay vì dừng hẳn. Đây chính là lý do
+      PHP — ngôn ngữ mà DVWA thuộc về, và cũng là ngôn ngữ chiếm 72/125 finding trong bộ hồi quy nội bộ — vẫn đạt 89%
+      precision / 100% recall.</p>
+
+    <p>Về phía SAST, hệ thống chạy được với ba engine (CodeQL, Semgrep, OpenGrep) và năm profile rule từ
+      <code>standard</code> tới <code>full</code>, trong đó <code>full</code> chồng thêm 64 query CodeQL và 103 rule
+      Semgrep tự viết lên các suite có sẵn. Về phía LLM, mọi provider mà LiteLLM nói chuyện được đều dùng được: OpenAI,
+      Anthropic, Gemini, DeepSeek, và Ollama (local hoặc cloud).
+    </p>
+
+    <pre><code><span class="cmd">$</span> vuln-hunter-x scan --url https://github.com/org/app.git \
+      --lang python --profile full --limit 10</code></pre>
+  </section>
+
+  <!-- ═══ 6 ═══ -->
+  <section>
+    <h2><span class="num">06</span> Những gì công cụ này không làm được</h2>
+
+    <ul>
+      <li><strong>Lỗi thuộc dạng "thiếu kiểm soát" nằm ngoài tầm với.</strong> Thiếu phân quyền, CSRF middleware bị tắt,
+        không có rate limiting — SAST không phát hiện được một cách đáng tin cậy, nên cũng không có gì để verifier thẩm
+        định. Báo cáo luôn kèm cảnh báo về giới hạn phạm vi đúng vì lý do này.</li>
+      <li><strong>Chất lượng phụ thuộc vào chất lượng của SAST đầu vào.</strong> Verifier chỉ có thể loại bớt cảnh báo
+        giả; nó không tạo ra được cảnh báo mà engine phía trước đã bỏ sót. Recall của toàn hệ thống bị chặn trên bởi
+        recall của SAST.</li>
+      <li><strong>Trên fixture tổng hợp, guided questions có thể phản tác dụng</strong> — như đã trình bày ở mục 4.4.
+      </li>
+    </ul>
+  </section>
+
+  <!-- ═══ 7 ═══ -->
+  <section>
+    <h2><span class="num">07</span> Kết luận</h2>
+
+    <p>Bài toán của SAST trong thực tế không phải là phát hiện, mà là thẩm định. Và thẩm định không phải là bài toán cần
+      một mô hình thông minh hơn — nó là bài toán cần <strong>đúng ngữ cảnh, được cung cấp đúng lúc, cho một mô hình bị
+        buộc phải trả lời đúng những câu hỏi mà loại lỗi đó đòi hỏi</strong>.</p>
+
+    <p>Khi tách được hai thứ đó ra, kết quả là: precision tăng từ 37,7% lên 82,7% <em>với một mô hình mini</em>, và lên
+      65,3% với một mô hình chạy hoàn toàn trên máy nội bộ, chi phí API bằng không. Phần lớn giá trị nằm ở bộ 397 câu
+      hỏi dẫn dắt và cơ chế xin ngữ cảnh nhiều lượt, chứ không nằm ở kích thước mô hình.</p>
+
+    <p>VulnHunterX là mã nguồn mở theo giấy phép MIT:</p>
+
+    <pre><code><span class="cmd">$</span> git clone https://github.com/vinsoc-cyber/VulnHunterX.git
+<span class="cmd">$</span> uv venv --python python3.12 .venv &amp;&amp; source .venv/bin/activate
+<span class="cmd">$</span> uv pip install -e ".[dev]"
+<span class="cmd">$</span> cp env.example .env        <span class="cmd"># thêm API key của provider</span>
+<span class="cmd">$</span> vuln-hunter-x check-env    <span class="cmd"># kiểm tra toolchain</span>
+<span class="cmd">$</span> vuln-hunter-x interactive  <span class="cmd"># wizard, không cần nhớ flag</span></code></pre>
+  </section>
+
+  <p class="signoff">VinSOC Research Team</p>
+
+  <section class="refs">
+    <h3>Tài liệu tham khảo</h3>
+    <ol>
+      <li>CyberArk Labs — <em>Vulnhalla: Picking the True Vulnerabilities from the CodeQL Haystack</em>, CyberArk Threat
+        Research Blog. <a
+          href="https://www.cyberark.com/resources/threat-research-blog/vulnhalla-picking-the-true-vulnerabilities-from-the-codeql-haystack">cyberark.com</a>
+      </li>
+      <li>VulnHunterX — source code và tài liệu, GitHub. <a
+          href="https://github.com/vinsoc-cyber/VulnHunterX">github.com/vinsoc-cyber/VulnHunterX</a></li>
+      <li>OWASP Benchmark Project — bộ dữ liệu ground-truth cho Java và Python. <a
+          href="https://owasp.org/www-project-benchmark/">owasp.org</a></li>
+      <li>NIST SARD — <em>Juliet Test Suite for C/C++ v1.3.1</em>. <a
+          href="https://samate.nist.gov/SARD/test-suites">samate.nist.gov</a></li>
+      <li>SecLLMHolmes — benchmark đánh giá năng lực suy luận lỗ hổng của LLM. <a
+          href="https://github.com/ai4cloudops/SecLLMHolmes">github.com/ai4cloudops/SecLLMHolmes</a></li>
+      <li>GitHub — <em>CodeQL CLI Documentation</em>. <a
+          href="https://codeql.github.com/docs/codeql-cli/">codeql.github.com</a></li>
+      <li>BerriAI — <em>LiteLLM: unified interface cho hơn 100 LLM provider</em>. <a
+          href="https://github.com/BerriAI/litellm">github.com/BerriAI/litellm</a></li>
+    </ol>
+  </section>
+</article>

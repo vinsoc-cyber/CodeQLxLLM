@@ -1,0 +1,1018 @@
+<title>Hunting Real Bugs with LLMs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;0,7..72,700;1,7..72,400;1,7..72,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --paper: #FAF9F7;
+    --paper-2: #F1EFE9;
+    --ink: #16151A;
+    --ink-2: #55535E;
+    --ink-3: #86838E;
+    --rule: #DEDBD3;
+    --rule-2: #C3BFB4;
+    --accent: #3B4BA8;
+    --tp: #9B2C1E;
+    --fp: #3B4BA8;
+    --nmd: #8A6A18;
+
+    --f-text: "Literata", Georgia, "Times New Roman", serif;
+    --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --text: 42rem;
+    --wide: 58rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #15141A;
+      --paper-2: #1D1C24;
+      --ink: #E9E6DE;
+      --ink-2: #A6A2AE;
+      --ink-3: #7B7786;
+      --rule: #2E2C37;
+      --rule-2: #45424F;
+      --accent: #8E9BEC;
+      --tp: #CF7259;
+      --fp: #8E9BEC;
+      --nmd: #BC9838;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #15141A;
+    --paper-2: #1D1C24;
+    --ink: #E9E6DE;
+    --ink-2: #A6A2AE;
+    --ink-3: #7B7786;
+    --rule: #2E2C37;
+    --rule-2: #45424F;
+    --accent: #8E9BEC;
+    --tp: #CF7259;
+    --fp: #8E9BEC;
+    --nmd: #BC9838;
+  }
+
+  * { box-sizing: border-box }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-text);
+    font-optical-sizing: auto;
+    font-size: 1.075rem;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* one strong left edge; wide blocks break out to the right only */
+  .page {
+    display: grid;
+    grid-template-columns:
+      [full-start] minmax(1.5rem, 1fr)
+      [main-start] minmax(0, var(--text))
+      [main-end] minmax(0, calc(var(--wide) - var(--text)))
+      [wide-end] minmax(1.5rem, 1fr) [full-end];
+    row-gap: 0;
+  }
+
+  .page > * { grid-column: main-start / main-end }
+  .wide { grid-column: main-start / wide-end }
+
+  /* ── masthead ── */
+  .masthead { padding: 5.5rem 0 0 }
+
+  .kicker {
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1.75rem;
+  }
+
+  h1 {
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    text-wrap: balance;
+    margin: 0 0 1.6rem;
+  }
+
+  .byline {
+    font-family: var(--f-mono);
+    font-size: .73rem;
+    letter-spacing: .03em;
+    color: var(--ink-3);
+    margin: 0 0 2.75rem;
+  }
+  .byline span::after { content: "  ·  " }
+  .byline span:last-child::after { content: "" }
+
+  .abstract {
+    font-size: 1.16rem;
+    line-height: 1.62;
+    color: var(--ink);
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    padding: 1.6rem 0;
+    margin: 0 0 1rem;
+  }
+  .abstract p { margin: 0 0 .9rem }
+  .abstract p:last-child { margin-bottom: 0 }
+  .masthead + .eyebrow { margin-top: 0 }
+
+  /* ── key figures ── */
+  .keyfigs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1.75rem 2.5rem;
+    padding: 1.75rem 0 0;
+    margin: 2.5rem 0 1rem;
+  }
+  .keyfig { border-top: 2px solid var(--ink); padding-top: .9rem }
+  .keyfig b {
+    display: block;
+    font-size: 2.15rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: .5rem;
+  }
+  .keyfig span { display: block; font-size: .82rem; line-height: 1.45; color: var(--ink-2) }
+
+  /* ── section headers ── */
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 .7rem;
+  }
+
+  .sec {
+    margin: 4rem 0 1.6rem;
+    padding-top: 1.4rem;
+    border-top: 2px solid var(--ink);
+  }
+  .sec .eyebrow { margin: 0 0 .5rem }
+  .sec h2 {
+    font-weight: 700;
+    font-size: clamp(1.5rem, 3.2vw, 1.95rem);
+    line-height: 1.2;
+    letter-spacing: -.014em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  h3.sub {
+    font-weight: 600;
+    font-size: 1.16rem;
+    line-height: 1.35;
+    margin: 2.8rem 0 1rem;
+    display: flex;
+    gap: .7rem;
+    align-items: baseline;
+  }
+  .subnum {
+    font-family: var(--f-mono);
+    font-size: .82rem;
+    font-weight: 500;
+    color: var(--accent);
+    flex: none;
+  }
+
+  /* ── body ── */
+  p { margin: 0 0 1.25rem; text-wrap: pretty }
+
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: .16em;
+    text-decoration-thickness: .5px;
+  }
+  a:hover { text-decoration-thickness: 1.5px }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
+  strong { font-weight: 600 }
+  em { font-style: italic }
+
+  ul { margin: 0 0 1.4rem; padding-left: 1.15rem }
+  li { margin-bottom: .7rem; padding-left: .25rem }
+  li::marker { color: var(--rule-2) }
+
+  code {
+    font-family: var(--f-mono);
+    font-size: .84em;
+    color: var(--ink);
+    background: var(--paper-2);
+    padding: .08em .3em;
+    border-radius: 2px;
+    word-break: break-word;
+  }
+
+  /* ── aside: quiet inline margin-note, folded into the flow ── */
+  .aside {
+    font-size: .92rem;
+    line-height: 1.55;
+    color: var(--ink-2);
+    font-style: italic;
+    border-left: 2px solid var(--rule-2);
+    padding: .1rem 0 .1rem .9rem;
+    margin: 0 0 1.25rem;
+  }
+  .aside code { font-style: normal }
+
+  /* ── note: emphasised takeaway ── */
+  .note {
+    background: var(--paper-2);
+    border-left: 3px solid var(--accent);
+    padding: 1.15rem 1.3rem;
+    margin: 0 0 1.6rem;
+  }
+  .note p { margin: 0 }
+
+  /* ── quotes: EN block, then VI block ── */
+  .qlabel {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    letter-spacing: .04em;
+    color: var(--ink-3);
+    margin: 0 0 .55rem;
+  }
+  .qlabel span {
+    font-weight: 500;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .quote {
+    border-left: 2px solid var(--rule-2);
+    padding-left: 1.1rem;
+    margin: 0 0 1.5rem;
+  }
+  .quote ul { margin: 0; padding-left: 1rem }
+  .quote li { margin-bottom: .8rem; font-style: italic; font-size: .95rem; line-height: 1.6 }
+  .quote li:last-child { margin-bottom: 0 }
+  .quote p { font-style: italic; font-size: .95rem; line-height: 1.6; margin: 0 }
+  .quote code { font-style: normal; background: none; padding: 0 }
+
+  /* ── tables ── */
+  .tablewrap { overflow-x: auto; margin: 0 0 1.9rem }
+  table { border-collapse: collapse; width: 100%; font-size: .89rem; line-height: 1.5 }
+  th, td { text-align: left; padding: .6rem .95rem .6rem 0; border-bottom: 1px solid var(--rule); vertical-align: top }
+  thead th {
+    font-family: var(--f-mono);
+    font-size: .66rem;
+    font-weight: 500;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule-2);
+    white-space: nowrap;
+    padding-bottom: .55rem;
+  }
+  tbody tr:last-child td { border-bottom: 2px solid var(--ink) }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+  tr.hl td { font-weight: 600 }
+  caption { caption-side: bottom; text-align: left; padding-top: .75rem; font-size: .78rem; line-height: 1.5; color: var(--ink-3) }
+
+  /* ── figures ── */
+  figure.fig { margin: 2.5rem 0 2.75rem }
+  .fig svg { display: block; width: 100%; height: auto }
+  figcaption {
+    font-size: .84rem;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin-top: 1rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--accent);
+    max-width: 44rem;
+  }
+  figcaption b {
+    font-family: var(--f-mono);
+    font-size: .68rem;
+    font-weight: 500;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-right: .6rem;
+  }
+
+  /* ── code block ── */
+  pre {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    padding: 1.15rem 1.25rem;
+    overflow-x: auto;
+    margin: 0 0 1.8rem;
+    font-family: var(--f-mono);
+    font-size: .77rem;
+    line-height: 1.62;
+  }
+  pre code { background: none; padding: 0; font-size: inherit }
+  .cmt { color: var(--ink-3) }
+
+  /* ── chart ── */
+  .chart { margin: 0 }
+  .chart-head { border-top: 2px solid var(--ink); padding-top: .9rem; margin-bottom: 1.6rem }
+  .chart-head b { display: block; font-weight: 600; font-size: .98rem; margin-bottom: .2rem }
+  .chart-head span { display: block; font-size: .82rem; color: var(--ink-2) }
+  .rows { display: flex; flex-direction: column; gap: 1.15rem }
+  .row { display: grid; grid-template-columns: minmax(8rem, auto) 1fr auto; column-gap: 1.1rem; row-gap: .3rem; align-items: center }
+  .rlabel { font-size: .87rem; line-height: 1.3 }
+  .rlabel small { display: block; font-family: var(--f-mono); font-size: .64rem; letter-spacing: .03em; color: var(--ink-3) }
+  .track { height: 1.3rem; background: var(--paper-2) }
+  .bar { height: 100%; background: var(--accent) }
+  .bar.base { background: var(--rule-2) }
+  .bval { font-family: var(--f-mono); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap }
+  .rmeta { grid-column: 2 / -1; font-family: var(--f-mono); font-size: .66rem; letter-spacing: .03em; color: var(--ink-3); font-variant-numeric: tabular-nums }
+  .axis { display: flex; justify-content: space-between; margin-top: 1.1rem; padding-top: .5rem; border-top: 1px solid var(--rule); font-family: var(--f-mono); font-size: .64rem; color: var(--ink-3) }
+
+  /* ── verdict marks ── */
+  .verdicts { display: flex; flex-wrap: wrap; gap: .35rem 1.75rem; font-family: var(--f-mono); font-size: .72rem; letter-spacing: .04em; margin: 0 0 1.6rem }
+  .verdicts span { display: inline-flex; align-items: center; gap: .5rem }
+  .sq { width: .6rem; height: .6rem; flex: none }
+  .sq.tp { background: var(--tp) }
+  .sq.fp { background: var(--fp) }
+  .sq.nmd { background: var(--nmd) }
+
+  /* ── back matter ── */
+  .signoff { font-family: var(--f-mono); font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); border-top: 2px solid var(--ink); padding-top: 1.5rem; margin: 3.5rem 0 2.5rem }
+  .refs-h { font-family: var(--f-mono); font-size: .7rem; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin: 0 0 1rem }
+  .refs { font-size: .87rem; line-height: 1.6; color: var(--ink-2) }
+  .refs ol { padding-left: 1.35rem; margin: 0 }
+  .refs li { margin-bottom: .7rem }
+  .refs a { word-break: break-word }
+  .refs cite { font-style: italic }
+  .colophon { font-size: .78rem; line-height: 1.6; color: var(--ink-3); padding: 1.75rem 0 6rem }
+
+  @media (max-width: 52rem) {
+    .masthead { padding-top: 3rem }
+    .row { grid-template-columns: 1fr }
+    .rmeta { grid-column: 1 }
+    figcaption { max-width: none }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important } }
+</style>
+<article class="page">
+
+  <header class="masthead">
+    <p class="kicker">VinSOC Research · Application Security</p>
+    <h1>Hunting the real bugs among hundreds of SAST alerts</h1>
+    <p class="byline"><span>VinSOC Research Team</span><span>2026-08-23</span><span>18 min read</span></p>
+  </header>
+
+  <p class="eyebrow">Abstract</p>
+  <div class="abstract">
+    <p>Scan an application and you get 400 alerts, of which maybe 30 are real bugs. The dominant cost of running SAST is not analysis time — it is the human reading alert #212, asking for the fourth time that day whether the <code>escapeshellarg()</code> two stack frames up actually neutralizes the sink.</p>
+    <p>This article describes how VulnHunterX automates that job: it forces an LLM to answer a rule-specific checklist of guided questions, with a multi-turn context-expansion loop, before it is allowed to commit to a verdict. Precision rises from 37.7% to 87.3% — and the striking part is that most of that gain survives when you swap in a small model, or one running entirely on local hardware.</p>
+  </div>
+
+  <div class="keyfigs wide">
+    <div class="keyfig"><b>37.7%</b><span>Precision of raw SAST on OWASP BenchmarkPython</span></div>
+    <div class="keyfig"><b>87.3%</b><span>Precision after verification, recall still 98.2%</span></div>
+    <div class="keyfig"><b>397</b><span>Guided-question templates across 7 languages</span></div>
+    <div class="keyfig"><b>$0</b><span>API cost with a local model, still cutting 68.5% of false alarms</span></div>
+  </div>
+
+  <!-- ═══ 1 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 1</p>
+    <h2>Introduction</h2>
+  </header>
+
+  <p>Every modern SAST engine operates by over-approximation: it flags <em>every</em> program point that attacker-controlled data <em>could</em> reach, because the alternative — silently dropping a point — means letting a real bug through. That is a correct design decision, but it pushes the entire cost onto a human.</p>
+
+  <aside class="aside">These three numbers measure the same thing on three different corpora: the fraction of SAST alerts that are genuinely bugs.</aside>
+  <p>On OWASP BenchmarkPython, treating every SAST alert as real yields only <strong>37.7%</strong> precision — nearly two-thirds of the triage effort is wasted. On Juliet C/C++ 1.3.1 the figure is <strong>50%</strong>. On VulnHunterX's in-house regression suite of 125 findings from four deliberately-vulnerable applications, it is <strong>70%</strong>.</p>
+
+  <p>The common reaction today is to throw an alert at an LLM and ask <em>“is this a real vulnerability?”</em>. That produces a very confident answer that is essentially a coin flip, because the model does not have the facts to answer — and, more importantly, nobody can check what it reasoned from.</p>
+
+  <p>This article describes how VulnHunterX solves that problem: not with a stronger model, but by <strong>forcing the model to answer a structured, per-bug-class set of questions before it is allowed to conclude</strong> — an implementation of the <em>Vulnhalla</em> methodology.</p>
+
+  <!-- ═══ 2 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 2</p>
+    <h2>Why deciding an alert is real is so hard</h2>
+  </header>
+
+  <h3 class="sub"><span class="subnum">2.1</span>A SAST alert is a fragment stripped of its context</h3>
+
+  <p>What SAST returns in a SARIF file is usually just: a rule id, a file path, a line number, a severity, a message, and — if you are lucky — a chain of dataflow steps from source to sink. To decide that an alert is real, however, the triager needs to know:</p>
+
+  <ul>
+    <li><strong>The definition of the function containing the flagged line</strong> — which branch the line sits in, and what condition, if any, guards it.</li>
+    <li><strong>Every call site of that function</strong> — where the input actually comes from, how many entry paths exist, and which are attacker-controlled.</li>
+    <li><strong>The bodies of the functions it calls</strong> — the real sink is often two or three layers deep, and an innocuously-named helper can be exactly where a command executes.</li>
+    <li><strong>Type definitions</strong> — struct, class, typedef, enum. A buffer's size lives in the struct definition, not on the flagged line.</li>
+    <li><strong>Global and macro declarations</strong> — a single <code>#define MAX_LEN 64</code> can be the entire answer to a buffer-overflow alert.</li>
+    <li><strong>The pointer's lifetime</strong> — for use-after-free you need <em>every</em> <code>free()</code>/<code>delete</code>/destructor site across the whole repo, not just the nearest one.</li>
+    <li><strong>The dataflow</strong> — source, the intermediate transforms, and the sink; plus the question of whether each transform is a legitimate sanitizer.</li>
+  </ul>
+
+  <p>A 40-line window around the flagged line — what most “LLM triage” tools drop into the prompt — almost never contains all of the above.</p>
+
+  <h3 class="sub"><span class="subnum">2.2</span>When the model is right about the facts but wrong about the verdict</h3>
+
+  <p>Here is a real <code>php/tainted-filename</code> alert, at <code>instructions.php:26</code> in DVWA. A weak model, one pass, no ability to request more context, answered as follows.</p>
+
+  <p class="qlabel"><span>Answer sheet</span> as produced by the model, unedited.</p>
+  <div class="quote">
+    <ul>
+      <li>“The potentially dangerous data originates from the <code>$_GET['doc']</code> superglobal, which is user input (line 26).”</li>
+      <li>“The data flows through <code>$selectedDocId</code> (line 27), then into <code>$readFile</code> via <code>$docs[$selectedDocId]['file']</code> (line 31).”</li>
+      <li>“There is a check using <code>array_key_exists()</code> to ensure that <code>$selectedDocId</code> exists in the <code>$docs</code> array (line 28-29). However, this only restricts the key to those defined in <code>$docs</code>, not the actual file path.”</li>
+    </ul>
+  </div>
+
+  <p>Its verdict: <strong>True Positive</strong>, high confidence. Ground truth: <strong>not a bug</strong>.</p>
+
+  <p>The remarkable thing is that the model was <strong>wrong about nothing factual</strong>. It correctly identified the source, the flow, and the nature of the check. It only erred at the final step: <code>array_key_exists()</code> does restrict the key — but that is harmless, because every value in the <code>$docs</code> array is a hardcoded literal. The decisive information lives in the <strong>definition of the <code>$docs</code> array</strong>, which never appears in the 40-line window.</p>
+
+  <figure class="fig wide">
+    <div>
+      <svg viewBox="0 0 960 340" role="img" aria-label="The decisive fact — the docs array of hardcoded literals — lies outside the 40-line window, so the model rules True Positive wrongly; when it requests the array definition it correctly rules False Positive.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
+          <text x="20" y="38" font-size="10.5" letter-spacing="1.2" opacity=".72">40-LINE WINDOW SENT TO THE MODEL</text>
+          <rect x="20" y="50" width="470" height="196" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".5"/>
+          <rect x="44" y="70" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="88" font-size="11.5">$_GET['doc']</text>
+          <text x="58" y="103" font-size="9.5" opacity=".7">line 26 · SOURCE</text>
+          <rect x="44" y="126" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="144" font-size="11.5">$selectedDocId</text>
+          <text x="58" y="159" font-size="9.5" opacity=".7">line 27 · TRANSFORM</text>
+          <rect x="44" y="182" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <text x="58" y="200" font-size="11.5">readfile(...)</text>
+          <text x="58" y="215" font-size="9.5" opacity=".7">line 31 · SINK</text>
+          <line x1="142" y1="110" x2="142" y2="122" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <line x1="142" y1="166" x2="142" y2="178" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <rect x="276" y="126" width="200" height="40" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4"/>
+          <text x="290" y="144" font-size="11.5">array_key_exists()</text>
+          <text x="290" y="159" font-size="9.5" opacity=".7">line 28-29 · GUARD?</text>
+          <line x1="240" y1="146" x2="272" y2="146" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
+          <text x="600" y="100" font-size="10.5" letter-spacing="1.2" style="fill:var(--accent)">DECISIVE FACT — OUTSIDE THE WINDOW</text>
+          <rect x="600" y="112" width="340" height="88" fill="none" style="stroke:var(--accent)" stroke-width="1.8"/>
+          <text x="616" y="136" font-size="10.5" style="fill:var(--accent)">$docs = [</text>
+          <text x="616" y="152" font-size="10.5" style="fill:var(--accent)">  'a' => ['file' => 'README.txt'],</text>
+          <text x="616" y="168" font-size="10.5" style="fill:var(--accent)">  'b' => ['file' => 'PHP-info.txt'] ]</text>
+          <text x="616" y="189" font-size="9.5" style="fill:var(--accent)" opacity=".85">line 12 · all values are hardcoded literals</text>
+          <line x1="494" y1="156" x2="596" y2="156" style="stroke:var(--accent)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arA)"/>
+          <text x="500" y="148" font-size="9.0" style="fill:var(--accent)">struct: / global:</text>
+          <line x1="20" y1="276" x2="940" y2="276" stroke="currentColor" stroke-width="1" opacity=".28"/>
+          <circle cx="28" cy="302" r="6" style="fill:var(--tp)"/>
+          <text x="44" y="300" font-size="11.5">No extra context requested → <tspan style="fill:var(--tp)">True Positive</tspan>, High</text>
+          <text x="44" y="318" font-size="9.5" opacity=".7">facts right, verdict wrong — ground truth says not a bug</text>
+          <circle cx="508" cy="302" r="6" style="fill:var(--fp)"/>
+          <text x="524" y="300" font-size="11.5">Array definition requested → <tspan style="fill:var(--fp)">False Positive</tspan>, High</text>
+          <text x="524" y="318" font-size="9.5" opacity=".7">matches ground truth</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Figure 1</b>The gap between “right about the facts” and “right about the verdict” is one fragment of context 14 lines away. Closing it is not a matter of a more expensive model, but of letting the model request exactly the fragment it is missing.</figcaption>
+  </figure>
+
+  <!-- ═══ 3 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 3</p>
+    <h2>The architecture of VulnHunterX</h2>
+  </header>
+
+  <p>VulnHunterX is not a new detector. It sits <em>behind</em> the detectors, takes their SARIF, and decides which alerts a human should actually spend time on.</p>
+
+  <figure class="fig wide">
+    <div>
+      <svg viewBox="0 0 960 280" role="img" aria-label="Four-stage pipeline: prepare produces the CodeQL database and CSV context store; analyze produces SARIF; verify reads SARIF and calls the LLM, fetching more context from the CSV store each round; report assembles the Markdown.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
+          <text x="24" y="36" font-size="10.5" letter-spacing="1.2" opacity=".72">CORE STAGES</text>
+          <rect x="24" y="58" width="176" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="40" y="84" font-size="12.5">1 · prepare</text>
+          <text x="40" y="103" font-size="9.5" opacity=".72">clone · CodeQL DB · CSV</text>
+          <rect x="270" y="58" width="190" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="286" y="84" font-size="12.5">2 · analyze</text>
+          <text x="286" y="103" font-size="9.5" opacity=".72">CodeQL · Semgrep · OpenGrep</text>
+          <rect x="530" y="58" width="200" height="62" fill="none" style="stroke:var(--accent)" stroke-width="2.0"/>
+          <text x="546" y="84" font-size="12.5" style="fill:var(--accent)">3 · verify</text>
+          <text x="546" y="103" font-size="9.5" style="fill:var(--accent)" opacity=".85">guided questions · multi-turn</text>
+          <rect x="790" y="58" width="150" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="806" y="84" font-size="12.5">4 · report</text>
+          <text x="806" y="103" font-size="9.5" opacity=".72">Markdown EN/VI</text>
+          <line x1="200" y1="89" x2="266" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="204" y="80" font-size="9.0" opacity=".72">source</text>
+          <line x1="460" y1="89" x2="526" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="464" y="80" font-size="9.0" opacity=".72">SARIF</text>
+          <line x1="730" y1="89" x2="786" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <text x="734" y="80" font-size="9.0" opacity=".72">verdict</text>
+          <text x="24" y="168" font-size="10.5" letter-spacing="1.2" opacity=".72">SERVING COMPONENTS</text>
+          <rect x="24" y="180" width="430" height="74" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4"/>
+          <text x="40" y="204" font-size="12.0">Context store (CSV)</text>
+          <text x="40" y="223" font-size="9.5" opacity=".72">functions · callers · structs · globals · macros · free_sites …</text>
+          <text x="40" y="240" font-size="9.5" opacity=".72">CodeQL queries, or tree-sitter when no database can be built</text>
+          <line x1="112" y1="120" x2="112" y2="176" stroke="currentColor" stroke-width="1.4" marker-end="url(#arN)"/>
+          <text x="120" y="152" font-size="9.0" opacity=".72">written once</text>
+          <rect x="700" y="180" width="240" height="74" fill="none" style="stroke:var(--accent)" stroke-width="1.5"/>
+          <text x="716" y="204" font-size="12.0" style="fill:var(--accent)">LLM (LiteLLM)</text>
+          <text x="716" y="223" font-size="9.5" style="fill:var(--accent)" opacity=".85">OpenAI · Anthropic · Gemini</text>
+          <text x="716" y="240" font-size="9.5" style="fill:var(--accent)" opacity=".85">DeepSeek · Ollama (local / cloud)</text>
+          <path d="M454,214 L560,214 L560,126" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="462" y="232" font-size="9.5" style="fill:var(--accent)">read on demand</text>
+          <path d="M660,124 L660,200 L696,200" fill="none" style="stroke:var(--accent)" stroke-width="1.6" marker-end="url(#arA)"/>
+          <path d="M700,232 L620,232 L620,126" fill="none" style="stroke:var(--accent)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arA)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Figure 2</b>The non-obvious part of the architecture: the CSV store produced by <code>prepare</code> does not serve the <code>analyze</code> stage — it serves <code>verify</code>. Each time the model requests more context is one read of this store, so the cost of context expansion is a file read, not a re-run of static analysis.</figcaption>
+  </figure>
+
+  <h3 class="sub"><span class="subnum">3.1</span>Guided questions, per bug class</h3>
+
+  <aside class="aside">Distribution by language: C/C++ 62, Python 67, Java 59, JavaScript 57, Go 54, PHP 52, C# 45, plus a fallback bank.</aside>
+  <p>This is the core component. Rather than one generic prompt, each <code>ruleId</code> in the SARIF is routed to its own question bank. VulnHunterX currently has <strong>397 question templates</strong> across 7 per-language banks.</p>
+
+  <p><strong>Step 1 — pick the right question bank for the alert.</strong> Each SAST engine names its rules differently, so the system tries two groups — match by rule name first, then match by CWE — stopping at the first that succeeds.</p>
+
+  <figure class="fig wide">
+    <div>
+      <svg viewBox="0 0 960 320" role="img" aria-label="Two-group routing: match by rule name first (four variants), on no match match by CWE via a 124-entry map, and if neither matches fall back to the generic question bank.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
+          <rect x="20" y="48" width="230" height="58" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="36" y="74" font-size="12.0">Finding from SARIF</text>
+          <text x="36" y="93" font-size="9.5" opacity=".72">ruleId + metadata.cwe</text>
+          <rect x="300" y="26" width="380" height="88" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <text x="318" y="50" font-size="12.5">1 · Match by RULE NAME</text>
+          <text x="318" y="72" font-size="9.5" opacity=".72">4 variants: exact · normalized · prefix · same-language</text>
+          <text x="318" y="96" font-size="10.5">cpp/use-after-free  →  cpp/use-after-free bank</text>
+          <rect x="300" y="150" width="380" height="88" fill="none" style="stroke:var(--accent)" stroke-width="2.0"/>
+          <text x="318" y="174" font-size="12.5" style="fill:var(--accent)">2 · Match by CWE</text>
+          <text x="318" y="196" font-size="9.5" style="fill:var(--accent)" opacity=".8">when the rule name matches no bank — 124-entry map</text>
+          <text x="318" y="220" font-size="10.5" style="fill:var(--accent)">CWE-98  →  file-inclusion  →  php/file-inclusion</text>
+          <rect x="300" y="268" width="380" height="36" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity=".65"/>
+          <text x="318" y="291" font-size="10.5" opacity=".72">3 · Neither matches → generic question bank</text>
+          <rect x="730" y="48" width="210" height="190" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="748" y="130" font-size="12.5">Question bank for</text>
+          <text x="748" y="150" font-size="12.5">the right bug class</text>
+          <text x="748" y="174" font-size="9.5" opacity=".72">397 templates · 7 languages</text>
+          <line x1="250" y1="76" x2="296" y2="76" stroke="currentColor" stroke-width="1.6" marker-end="url(#arN)"/>
+          <path d="M276,106 L276,188 L296,188" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arN)"/>
+          <path d="M276,238 L276,286 L296,286" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity=".65" marker-end="url(#arN)"/>
+          <text x="150" y="130" font-size="9.5" opacity=".72">no match</text>
+          <text x="150" y="262" font-size="9.5" opacity=".65">no match</text>
+          <line x1="680" y1="70" x2="726" y2="70" stroke="currentColor" stroke-width="1.6" marker-end="url(#arN)"/>
+          <line x1="680" y1="194" x2="726" y2="194" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Figure 3</b>The second group matters most operationally: it lets any custom rule reuse an existing question bank without touching code. A custom CodeQL query only needs to declare <code>@id cpp/my-rule</code>; a custom Semgrep rule only needs <code>metadata.cwe</code>.</figcaption>
+  </figure>
+
+  <p><strong>Step 2 — how the question bank is designed.</strong> The crucial point is that these questions <strong>do not ask “is this a bug”</strong>. They are ordered in a fixed sequence: anchor the model to the exact line, force it to gather facts with checkable coordinates, and only then hand it the decision rule. The <code>cpp/use-after-free</code> bank has 10 questions in four groups.</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead>
+        <tr><th>Question group</th><th>Its job</th><th>The typical mistake it blocks</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Q1</strong> — anchor</td>
+          <td>Quote the exact statement at the flagged line, name the enclosing function, classify the line as a pointer use, a free call, or merely a declaration</td>
+          <td>The model commenting generically on the whole snippet instead of the exact line SAST flagged</td>
+        </tr>
+        <tr>
+          <td><strong>Q2</strong> — scope</td>
+          <td>When the snippet contains several functions, identify which one the flagged line belongs to and reason only about it</td>
+          <td>Convicting merely because a sibling function looks like a UAF pattern or has a suggestive name</td>
+        </tr>
+        <tr>
+          <td><strong>Q3–4</strong> — gather facts</td>
+          <td>Trace where the pointer is allocated; enumerate <strong>every</strong> free/delete call with function, file, and line; mark which frees are conditional</td>
+          <td>Concluding from a feeling, with no coordinate a reviewer can re-check</td>
+        </tr>
+        <tr>
+          <td><strong>Q5–9</strong> — check defenses</td>
+          <td>Is the pointer set to NULL after free; the shortest control-flow path from free to use; does the pointer escape the function; are there aliases to the same memory; is it reassigned in between</td>
+          <td>Missing precisely the reasons a suspicious-looking UAF pattern is actually harmless</td>
+        </tr>
+        <tr class="hl">
+          <td><strong>Q10</strong> — decision rule</td>
+          <td>The minimum needed to rule TP (a triple: free site, use site, and the control-flow path linking them) and the evidence required to rule FP (NULL-after-free, reallocation, an unreachable branch, or a flagged line that is only a declaration)</td>
+          <td>The model guessing when facts are missing, instead of returning <code>NEEDS_MORE_DATA</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <p>This structure is exactly why a small model still works: it does not have to invent what to check, nor set its own threshold for concluding — both are already in the prompt. The model's remaining job is to read the code and answer.</p>
+  </div>
+
+  <p class="qlabel"><span>Guided questions</span> the first four of ten, verbatim as loaded into the prompt from <code>cpp_questions.yaml</code>.</p>
+  <div class="quote">
+    <ul>
+      <li>“ANCHOR FIRST: quote the EXACT statement at the flagged line. Name the function it lives in. Classify the flagged line as one of: (a) a pointer USE (deref / read / write / pass-to-function), (b) a free/delete/destructor call, (c) a function signature or declaration, (d) something else. If (c) or (d), the SAST flag is suspect — record this and weight your verdict accordingly.”</li>
+      <li>“If the snippet contains MULTIPLE functions (e.g. a vulnerable variant alongside a patched or test variant, or a helper alongside its caller), identify which function the flagged line belongs to. Reason ONLY about that function's behavior. Do NOT convict based on UAF patterns visible in sibling functions, regardless of how those functions are named.”</li>
+      <li>“Where is the pointer at the flagged line ALLOCATED (malloc, calloc, new, strdup, custom allocator)? If allocation is in a DIFFERENT function, name that function — request 'caller:&lt;func&gt;' or 'all_callers:&lt;func&gt;' context if you cannot see it.”</li>
+      <li>“List ALL free()/delete calls reachable from the flagged use — include the function name, file, and line number for EACH. If you cannot enumerate them from the snippet, request 'free_sites:&lt;pointer_name&gt;' context. Mark which frees are conditional (inside if/switch/error paths).”</li>
+    </ul>
+  </div>
+
+  <p>Beyond the question list, each bank declares three fields that control the engine's behavior. For <code>cpp/use-after-free</code>:</p>
+
+  <ul>
+    <li><code>additional_context: [free_sites, caller, all_callers, struct, callees, destructor, field_writes]</code> — the context types the model is allowed to request for this bug class.</li>
+    <li><code>context_hint</code> — a suggested order: fetch the pointer's <code>free_sites</code> first, then where it is allocated, its type definition, and the destructor of its owning class.</li>
+    <li><code>min_iterations: 3</code> — the minimum number of conversation rounds, i.e. the model <strong>is not allowed</strong> to conclude on its very first answer.</li>
+  </ul>
+
+  <h3 class="sub"><span class="subnum">3.2</span>Answer first, conclude second</h3>
+
+  <p>The question bank only works if the model is <em>forced</em> to answer all of it before it may conclude. That constraint lives in the system prompt as a mandatory six-step procedure, in strict order.</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead><tr><th class="num">Step</th><th>Requirement</th><th>Why it is needed</th></tr></thead>
+      <tbody>
+        <tr><td class="num">0</td><td><strong>Locate the flagged line</strong>: find it by line number in the numbered code block, quote its exact text, confirm the construct the rule describes is actually there</td><td>Blocks reasoning about a different snippet than the one SAST flagged</td></tr>
+        <tr><td class="num">1</td><td><strong>Identify the vulnerability class</strong> from the rule id and description</td><td>Selects the right reasoning frame</td></tr>
+        <tr><td class="num">2</td><td><strong>Answer every guided question</strong>, based only on the provided code, citing line numbers; if something is not visible, say <em>“Not visible in provided context”</em></td><td>Forces every claim to carry a checkable coordinate, and forces the model to admit missing facts</td></tr>
+        <tr><td class="num">3</td><td><strong>Trace the dataflow</strong>: source → transform/sanitizer → sink, listing each step with line numbers</td><td>Separates “a path exists” from “it looks dangerous”</td></tr>
+        <tr><td class="num">4</td><td><strong>Evaluate reachability and exploitability</strong> of that path</td><td>A dangerous sink on an unreachable branch is not a bug</td></tr>
+        <tr class="hl"><td class="num">5</td><td><strong>Only now</strong> may the verdict be given</td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Three principles that accompany the procedure matter as much as the questions themselves:</p>
+
+  <ul>
+    <li><strong>Asymmetric evidence bar.</strong> To rule <em>False Positive</em>, the model must point to a <strong>specific, visible</strong> defense in the code — a bounds check, a sanitizer call, a type guarantee, or a framework mechanism. The exact constraint in the prompt: <em>“Absence of evidence of a vulnerability is NOT evidence of safety.”</em> The model is also forbidden from inferring safety from a function's name or from attributes such as <code>static</code> or <code>__init</code>.</li>
+    <li><strong>If it cannot see it, it cannot conclude.</strong> If the flagged line is not present in the provided code, the model <strong>may not</strong> answer <em>False Positive</em> — it must return <em>Needs More Data</em> and request the missing code. This directly blocks the worst failure mode of LLM triage: fabricating a safe verdict for a line it never read.</li>
+    <li><strong>The rule locates a sink; it does not fix the bug class.</strong> If the flagged sink is genuinely exploitable, the model must rule <em>True Positive</em> even when the real class differs from the rule's CWE — naming the real class in its reasoning. Conversely, it is forbidden from “borrowing” a different bug at a different line to justify the alert under review.</li>
+  </ul>
+
+  <aside class="aside">This is the single easiest mistake when rolling your own LLM triage: using the rule's metadata as evidence about the instance.</aside>
+  <p>The prompt also teaches the model to read rule metadata correctly: <code>precision: high</code> describes the reliability of the <strong>pattern</strong> across a corpus, and says nothing about whether <strong>this instance</strong> is exploitable; <code>security-severity</code> is the rule's worst-case rating, useful only to prioritize reviewer attention, never a reason to lean toward True Positive.</p>
+
+  <p>The result of all these constraints is a change in the nature of the output: <strong>a verdict without an answer sheet is unfalsifiable; a verdict with one, where every claim points to a specific line number, is reviewable in thirty seconds</strong> — you just open the three cited line numbers and check.</p>
+
+  <h3 class="sub"><span class="subnum">3.3</span>Multi-turn context expansion</h3>
+
+  <p>When the model finds it lacks a fact, it can request more context from a fixed vocabulary, and the engine serves the request from the CSV store.</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead><tr><th>Request</th><th>What it returns</th></tr></thead>
+      <tbody>
+        <tr><td><code>caller:</code> / <code>all_callers:</code></td><td>The calling function's code / all callers (up to 10)</td></tr>
+        <tr><td><code>function:</code> / <code>callees:</code> / <code>callee_bodies:</code></td><td>The sink function's body, the list of functions it calls, and their bodies</td></tr>
+        <tr><td><code>struct:</code> / <code>typedef:</code> / <code>enum:</code></td><td>Type definition, type alias, enum with its values</td></tr>
+        <tr><td><code>global:</code> / <code>macro:</code></td><td>Global variable declaration, macro definition</td></tr>
+        <tr><td><code>free_sites:</code></td><td>Every free()/delete/destructor site for a pointer across the whole repo (C/C++)</td></tr>
+        <tr><td><code>destructor:</code> / <code>field_writes:</code></td><td>Destructor body, every write site of a field (C/C++, for RAII and TOCTOU)</td></tr>
+        <tr><td><code>framework_sanitizers:</code> / <code>framework_guards:</code></td><td>The validation boundary and auth guards at the framework layer (e.g. NestJS <code>ValidationPipe</code>, <code>APP_GUARD</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure class="fig wide">
+    <div>
+      <svg viewBox="0 0 960 320" role="img" aria-label="Multi-turn loop: the engine builds a prompt, the model returns a JSON envelope; if it still requests context or has not run the minimum rounds, ContextProvider reads the CSV store and the loop repeats, otherwise the verdict is final.">
+        <defs>
+          <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--accent)"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
+          <rect x="20" y="56" width="250" height="96" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="36" y="80" font-size="12.5">Prompt</text>
+          <text x="36" y="100" font-size="9.5" opacity=".75">finding + numbered code</text>
+          <text x="36" y="118" font-size="9.5" opacity=".75">+ dataflow [SOURCE] → [SINK]</text>
+          <text x="36" y="136" font-size="9.5" opacity=".75">+ N guided questions</text>
+          <rect x="330" y="56" width="200" height="96" fill="none" style="stroke:var(--accent)" stroke-width="1.8"/>
+          <text x="346" y="80" font-size="12.5" style="fill:var(--accent)">LLM</text>
+          <text x="346" y="100" font-size="9.5" style="fill:var(--accent)" opacity=".85">answers each question</text>
+          <text x="346" y="118" font-size="9.5" style="fill:var(--accent)" opacity=".85">traces the dataflow</text>
+          <text x="346" y="136" font-size="9.5" style="fill:var(--accent)" opacity=".85">emits a JSON envelope</text>
+          <line x1="270" y1="104" x2="326" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <path d="M700,52 L820,104 L700,156 L580,104 Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="700" y="99" font-size="10.0" text-anchor="middle">context_needed empty?</text>
+          <text x="700" y="116" font-size="10.0" text-anchor="middle">iterations ≥ min?</text>
+          <line x1="530" y1="104" x2="576" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
+          <line x1="820" y1="104" x2="862" y2="104" stroke="currentColor" stroke-width="1.7" marker-end="url(#arN)"/>
+          <text x="826" y="95" font-size="9.5">YES</text>
+          <rect x="866" y="76" width="84" height="56" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <text x="880" y="100" font-size="11.0">Verdict</text>
+          <text x="880" y="118" font-size="9.5" opacity=".75">final</text>
+          <path d="M700,156 L700,212 L436,212" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="486" y="232" font-size="9.5" style="fill:var(--accent)">NO · e.g. ["free_sites:buff1"]</text>
+          <rect x="226" y="190" width="210" height="44" fill="none" style="stroke:var(--accent)" stroke-width="1.6"/>
+          <text x="242" y="210" font-size="11.0" style="fill:var(--accent)">ContextProvider</text>
+          <text x="242" y="226" font-size="9.5" style="fill:var(--accent)" opacity=".85">reads the CSV store</text>
+          <path d="M226,212 L145,212 L145,158" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
+          <text x="20" y="258" font-size="9.5" style="fill:var(--accent)">new context is appended — the model re-answers every question</text>
+          <line x1="20" y1="278" x2="940" y2="278" stroke="currentColor" stroke-width="1" opacity=".28"/>
+          <text x="20" y="300" font-size="10.0" opacity=".72">In-house suite: mean 2.49 rounds / finding · upper bound set by max_iterations</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Figure 4</b>Both conditions must hold for the loop to stop: the model requests no more context <em>and</em> it has run the minimum rounds for that bug class. For use-after-free, <code>min_iterations: 3</code> means a first-round conclusion is blocked even when the model is confident.</figcaption>
+  </figure>
+
+  <aside class="aside">VulnHunterX does not rebuild the DFG — it reuses the dataflow analysis that is CodeQL's strength.</aside>
+  <p>The prompt always includes the <strong>dataflow path extracted by the SAST engine itself</strong>, annotated <code>[SOURCE]</code> / <code>[TRANSFORM]</code> / <code>[SINK]</code> per step. What VulnHunterX adds is what SAST does not provide: the call graph, type definitions, and object lifetimes.</p>
+
+  <h3 class="sub"><span class="subnum">3.4</span>The output</h3>
+
+  <p>The model may not answer freely. It must return a strictly-structured JSON envelope, and the engine saves each finding as a file under <code>output/&lt;lang&gt;/&lt;repo&gt;/verification_results/</code>. The envelope has seven fields:</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead><tr><th>Field</th><th>Contents</th></tr></thead>
+      <tbody>
+        <tr><td><code>answers[]</code></td><td>The answer sheet — one element per guided question, with line citations</td></tr>
+        <tr><td><code>data_flow</code></td><td>The traced flow, as <code>source (line N) → transform (line M) → sink (line K)</code></td></tr>
+        <tr><td><code>verdict</code></td><td><code>True Positive</code> / <code>False Positive</code> / <code>Needs More Data</code></td></tr>
+        <tr><td><code>confidence</code></td><td><code>High</code> / <code>Medium</code> / <code>Low</code> — exactly one of the three</td></tr>
+        <tr><td><code>confidence_score</code></td><td>A 0.0–1.0 score; if the model gives none, the engine maps it from the categorical level (High = 0.85, Medium = 0.6, Low = 0.3)</td></tr>
+        <tr><td><code>reasoning</code></td><td>A sentence or two, required to reference the answer sheet and the dataflow</td></tr>
+        <tr><td><code>context_needed[]</code></td><td>The missing context, used to trigger the next conversation round</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="aside">Because of this instrumentation, every cost figure in Section 4 is traceable back to an individual finding, rather than being an estimate.</aside>
+  <p>Alongside the model-generated part, the engine records the measurements of the run itself: <code>iterations</code>, <code>model</code>, <code>timestamp</code>, <code>elapsed_seconds</code>, <code>input_tokens</code> / <code>output_tokens</code> / <code>cached_input_tokens</code>, and <code>cost_usd</code>.</p>
+
+  <p>Below is a real verdict, metadata trimmed, for a <code>double-free</code> alert reported by Semgrep at <code>dvcp.c:62</code>:</p>
+
+  <pre><code>{
+  "finding": {
+    "rule_id": "c.lang.security.double-free.double-free",
+    "message": "Variable 'buff1' was freed twice...",
+    "file": "repos/c/dvcp/dvcp.c",
+    "start_line": 62,
+    "precision": "very-high",
+    "cwe_ids": ["CWE-415"],
+    "tool": "Semgrep"
+  },
+  "verdict": "False Positive",
+  "confidence": "Low",
+  "confidence_score": 0.55,
+  "reasoning": "The flagged free is in a different file/function than the
+     only other known free sites, and no control-flow path linking them is
+     provided. Without evidence of a prior free of the same memory in the
+     same execution context, the double-free claim is unsupported.",
+  "answers": [
+    "Flagged line: dvcp.c:62 `free(buff1);` — a free call.",
+    "Only the `if` block is shown; the containing function is unknown.",
+    "Only two free sites for buff1 listed: imgRead.c:59 and imgRead.c:62
+       (both in ProcessImage). The flagged free at dvcp.c:62 is not
+       accounted for in that list.",
+    "No code path shown that connects the flagged free to any other free.",
+    "No NULL assignment visible."
+  ],
+  "iterations": 3,
+  "model": "deepseek-v4-flash",
+  "input_tokens": 10324,
+  "output_tokens": 3654,
+  "cached_input_tokens": 6016
+}</code></pre>
+
+  <p>This record illustrates exactly what Section 3.2 describes. The rule declares <code>precision: very-high</code>, but the model does not take that as evidence. It enumerates <strong>exactly</strong> the two known free sites with file and line, shows that the flagged line is not among them, and lowers confidence to <code>Low</code> rather than asserting certainty.</p>
+
+  <p>The three verdict values are used as follows in practice:</p>
+
+  <p class="verdicts">
+    <span><i class="sq tp"></i>True Positive</span>
+    <span><i class="sq fp"></i>False Positive</span>
+    <span><i class="sq nmd"></i>Needs More Data</span>
+  </p>
+
+  <ul>
+    <li><strong>True Positive</strong> — queued for handling, ordered by <code>confidence_score</code> and severity.</li>
+    <li><strong>False Positive</strong> — closed, but the answer sheet is retained so the decision can be audited later. This is the difference from filtering by regex or an exclude-list: every dismissal comes with a reason that has coordinates.</li>
+    <li><strong>Needs More Data</strong> — a state that is retained <strong>deliberately</strong>. A triage system that can say “I don't have enough facts” is far more useful than one that always answers, because it turns the hard cases into a short list for a human rather than mixing lucky guesses into the same pile as grounded conclusions. Across the 125-finding regression suite, only <strong>one</strong> case landed here.</li>
+  </ul>
+
+  <!-- ═══ 4 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 4</p>
+    <h2>Experimental results</h2>
+  </header>
+
+  <h3 class="sub"><span class="subnum">4.1</span>The in-house regression suite</h3>
+
+  <p>This suite has 125 findings from four deliberately-vulnerable targets — <strong>dvcp</strong> (C), <strong>dvwa</strong> (PHP), <strong>insecure-coding-examples</strong> (C/C++), <strong>nodegoat</strong> (JavaScript) — with hand-built ground truth: 88 real bugs, 37 false alarms.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th></th><th class="num">Precision</th><th class="num">Recall</th></tr></thead>
+      <tbody>
+        <tr><td>Raw SAST (every alert taken as real)</td><td class="num">70%</td><td class="num">100%</td></tr>
+        <tr class="hl"><td>VulnHunterX</td><td class="num">92%</td><td class="num">95%</td></tr>
+      </tbody>
+      <caption>Cost for the full 125 findings: $14.58, about $0.12 per finding, at a 69% prompt-cache hit rate.</caption>
+    </table>
+  </div>
+
+  <h3 class="sub"><span class="subnum">4.2</span>How much the guided questions contribute</h3>
+
+  <p>On OWASP BenchmarkPython (300 cases), the benchmark framework compares four approaches: <code>raw-sast</code> (no LLM), <code>ablation-zero</code> (LLM, no questions), <code>ablation-generic</code> (generic questions), and <code>vulnhunterx</code> (rule-specific guided questions).</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead><tr><th>Approach</th><th>Model</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">FP-reduction</th></tr></thead>
+      <tbody>
+        <tr><td>raw-sast</td><td>—</td><td class="num">37.7%</td><td class="num">100%</td><td class="num">0%</td></tr>
+        <tr><td>ablation-zero (no questions)</td><td>DeepSeek</td><td class="num">77.3%</td><td class="num">96.5%</td><td class="num">82.9%</td></tr>
+        <tr><td>ablation-generic (generic questions)</td><td>DeepSeek</td><td class="num">81.1%</td><td class="num">94.7%</td><td class="num">86.6%</td></tr>
+        <tr class="hl"><td>vulnhunterx (guided questions)</td><td>DeepSeek</td><td class="num">87.3%</td><td class="num">98.2%</td><td class="num">91.4%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>This is the cleanest result in the whole set: the full pipeline beats both ablations on <strong>precision and recall</strong>, for every model tested. Across all four datasets, with the strongest model tested, the system cuts false positives by <strong>78.6%–91.4%</strong> while retaining <strong>87.5%–98.2%</strong> of the real bugs.</p>
+
+  <h3 class="sub"><span class="subnum">4.3</span>You do not need a strong LLM</h3>
+
+  <p>This is the most operationally valuable result, because it determines running cost. Same OWASP BenchmarkPython, same pipeline, only the model changes.</p>
+
+  <figure class="fig wide">
+    <div class="chart">
+      <div class="chart-head">
+        <b>Precision by model — same pipeline, same dataset</b>
+        <span>OWASP BenchmarkPython, 300 cases. Recall and real API cost noted per row.</span>
+      </div>
+      <div class="rows">
+        <div class="row">
+          <div class="rlabel">Raw SAST<small>no LLM</small></div>
+          <div class="track"><div class="bar base" style="width:37.7%"></div></div>
+          <div class="bval">37.7%</div>
+          <div class="rmeta">recall 100% · $0 · every alert kept</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">qwen3-coder<small>ollama · local</small></div>
+          <div class="track"><div class="bar" style="width:65.3%;opacity:.6"></div></div>
+          <div class="bval">65.3%</div>
+          <div class="rmeta">recall 99.1% · $0 · 68.5% FP cut</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">gpt-4.1-mini<small>api · small model</small></div>
+          <div class="track"><div class="bar" style="width:82.7%;opacity:.8"></div></div>
+          <div class="bval">82.7%</div>
+          <div class="rmeta">recall 97.4% · $1.10 · 87.7% FP cut</div>
+        </div>
+        <div class="row">
+          <div class="rlabel">DeepSeek<small>api · strongest tested</small></div>
+          <div class="track"><div class="bar" style="width:87.3%"></div></div>
+          <div class="bval">87.3%</div>
+          <div class="rmeta">recall 98.2% · $0.40 · 91.4% FP cut</div>
+        </div>
+      </div>
+      <div class="axis"><span>0%</span><span>50%</span><span>100% precision</span></div>
+    </div>
+    <figcaption><b>Figure 5</b>A mini model takes precision from 37.7% to 82.7%, only 4.6 points behind the strongest. A model running entirely locally, at zero API cost, still cuts more than two-thirds of the false alarms while keeping 99.1% of the real bugs.</figcaption>
+  </figure>
+
+  <p>More telling than the absolute number is how much the scaffolding contributes to the weak model itself. For gpt-4.1-mini on the same dataset: no guided questions → 64.0% precision; generic questions → 59.1%; rule-specific guided questions → <strong>82.7%</strong>. The right question bank gives the small model <strong>over 18 points of precision</strong> — more than the gap between it and the large model.</p>
+
+  <p>The SecLLMHolmes results make this even clearer once you put it in dollars:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Model</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">Cost, full set</th></tr></thead>
+      <tbody>
+        <tr><td>gpt-5</td><td class="num">78.4%</td><td class="num">85.9%</td><td class="num">$16.75</td></tr>
+        <tr><td>DeepSeek</td><td class="num">82.1%</td><td class="num">87.5%</td><td class="num">n/a</td></tr>
+        <tr><td>gpt-4.1-mini</td><td class="num">74.7%</td><td class="num">89.9%</td><td class="num">$0.73</td></tr>
+        <tr class="hl"><td>qwen3-coder (local)</td><td class="num">70.5%</td><td class="num">87.8%</td><td class="num">$0</td></tr>
+      </tbody>
+      <caption>LiteLLM has no price for DeepSeek, so the harness records $0; the real cost is one to two orders of magnitude below gpt-5.</caption>
+    </table>
+  </div>
+
+  <p>The local model is only <strong>7.9 precision points</strong> behind <code>gpt-5</code>, while <code>gpt-5</code> costs $16.75 for the same workload — and <code>gpt-5</code> is not even the best model in the table. For a security team that cannot send source code off-premises, this is the difference between “usable” and “not usable”.</p>
+
+  <h3 class="sub"><span class="subnum">4.4</span>Where that conclusion ends</h3>
+
+  <p>The small model's advantage is uneven across bug classes. On Juliet C/C++ — which tests memory-safety reasoning — gpt-4.1-mini cuts only <strong>23.9%</strong> of false positives, while DeepSeek reaches <strong>82.2%</strong> on the same dataset and pipeline. Two local-model runs on OWASP BenchmarkJava abstained on essentially every finding — recorded as “100% FP-reduction” but really a failure wearing a success metric's clothes, and those rows are kept in the published comparison tables.</p>
+
+  <div class="note">
+    <p>For common web bug classes — injection, path traversal, XSS, deserialization — a small or local model plus good scaffolding is production-usable. For memory-lifetime reasoning in C/C++, scaffolding does not substitute for model capability.</p>
+  </div>
+
+  <p>Guided questions are also not always beneficial. On Juliet, <code>ablation-generic</code> (88.1%/98.9%) <em>beat</em> the full pipeline (83.8%/93.8%) with DeepSeek. Our read: Juliet's synthetic <code>bad()</code>/<code>good()</code> function pairs are self-contained by construction, so rule-specific questions only lengthen the prompt without adding signal, and sometimes talk the model into over-thinking a two-line case. Guided questions earn their keep on real code, where source and sink are separated by several call layers.</p>
+
+  <!-- ═══ 5 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 5</p>
+    <h2>Multi-language support: both compiled and interpreted</h2>
+  </header>
+
+  <p>VulnHunterX supports <strong>8 languages</strong>, covering both families:</p>
+
+  <div class="tablewrap wide">
+    <table>
+      <thead><tr><th>Family</th><th>Language</th><th>Context source for verification</th></tr></thead>
+      <tbody>
+        <tr><td>Compiled</td><td>C, C++</td><td>CodeQL DB — 14 extraction queries: functions, callers, structs, globals, macros, enums, typedefs, free_sites, destructors, field_writes…</td></tr>
+        <tr><td>Compiled</td><td>Java</td><td>CodeQL DB — functions, callers, classes</td></tr>
+        <tr><td>Compiled</td><td>Go, C#</td><td>CodeQL DB — functions, callers, classes</td></tr>
+        <tr><td>Interpreted</td><td>Python</td><td>CodeQL DB — functions, callers, classes</td></tr>
+        <tr><td>Interpreted</td><td>JavaScript</td><td>CodeQL DB — functions, callers, classes</td></tr>
+        <tr class="hl"><td>Interpreted</td><td>PHP</td><td>tree-sitter (when no CodeQL database can be built)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="aside">PHP accounts for 72 of the 125 findings in the in-house suite, and still reaches 89% precision / 100% recall with only tree-sitter context.</aside>
+  <p>The technically interesting part is the <strong>fallback mechanism</strong>: when no CodeQL database can be built — because the language is unsupported, the build fails, or the repo lacks a toolchain — the system extracts context with tree-sitter, which only needs to parse syntax, not compile. The context is lower-quality, since there is no precise interprocedural call graph, but the verification pipeline still runs instead of halting.</p>
+
+  <p>On the SAST side, the system runs with three engines (CodeQL, Semgrep, OpenGrep) and five rule profiles from <code>standard</code> to <code>full</code>, where <code>full</code> layers 64 custom CodeQL queries and 103 custom Semgrep rules on top of the built-in suites. On the LLM side, any provider LiteLLM speaks is usable: OpenAI, Anthropic, Gemini, DeepSeek, and Ollama (local or cloud).</p>
+
+  <pre><code><span class="cmt">$</span> vuln-hunter-x scan --url https://github.com/org/app.git \
+      --lang python --profile full --limit 10</code></pre>
+
+  <!-- ═══ 6 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 6</p>
+    <h2>What this tool cannot do</h2>
+  </header>
+
+  <ul>
+    <li><strong>Absence-of-control bugs are out of reach.</strong> Missing authorization, disabled CSRF middleware, no rate limiting — SAST does not reliably flag these, so there is nothing for the verifier to verify. Reports carry an explicit coverage-limitation caveat for exactly this reason.</li>
+    <li><strong>Quality is bounded by the input SAST.</strong> The verifier can only remove false alarms; it cannot create an alert the upstream engine missed. The system's recall is capped by the SAST's recall.</li>
+    <li><strong>On synthetic fixtures, guided questions can backfire</strong> — as shown in Section 4.4.</li>
+  </ul>
+
+  <!-- ═══ 7 ═══ -->
+  <header class="sec">
+    <p class="eyebrow">Section 7</p>
+    <h2>Conclusion</h2>
+  </header>
+
+  <p>The real-world SAST problem is not detection, it is triage. And triage is not a problem that needs a smarter model — it is a problem that needs <strong>the right context, delivered at the right moment, to a model that is forced to answer exactly the questions its bug class demands</strong>.</p>
+
+  <p>Once you separate those two things, the result is precision rising from 37.7% to 82.7% <em>with a mini model</em>, and to 65.3% with a model running entirely on local hardware at zero API cost. Most of the value lives in the 397 guided-question templates and the multi-turn context-request loop, not in model size.</p>
+
+  <p>VulnHunterX is open source under the MIT license:</p>
+
+  <pre><code><span class="cmt">$</span> git clone https://github.com/vinsoc-cyber/VulnHunterX.git
+<span class="cmt">$</span> uv venv --python python3.12 .venv &amp;&amp; source .venv/bin/activate
+<span class="cmt">$</span> uv pip install -e ".[dev]"
+<span class="cmt">$</span> cp env.example .env        <span class="cmt"># add your provider key</span>
+<span class="cmt">$</span> vuln-hunter-x check-env    <span class="cmt"># verify the toolchain</span>
+<span class="cmt">$</span> vuln-hunter-x interactive  <span class="cmt"># guided wizard, no flags to remember</span></code></pre>
+
+  <p class="signoff">VinSOC Research Team</p>
+
+  <p class="refs-h">References</p>
+  <div class="refs">
+    <ol>
+      <li>CyberArk Labs. <cite>Vulnhalla: Picking the True Vulnerabilities from the CodeQL Haystack</cite>. CyberArk Threat Research Blog. <a href="https://www.cyberark.com/resources/threat-research-blog/vulnhalla-picking-the-true-vulnerabilities-from-the-codeql-haystack">cyberark.com</a></li>
+      <li>VulnHunterX — source code and documentation. <a href="https://github.com/vinsoc-cyber/VulnHunterX">github.com/vinsoc-cyber/VulnHunterX</a></li>
+      <li>OWASP Benchmark Project — ground-truth datasets for Java and Python. <a href="https://owasp.org/www-project-benchmark/">owasp.org</a></li>
+      <li>NIST SARD. <cite>Juliet Test Suite for C/C++ v1.3.1</cite>. <a href="https://samate.nist.gov/SARD/test-suites">samate.nist.gov</a></li>
+      <li>SecLLMHolmes — a benchmark for LLM vulnerability-reasoning ability. <a href="https://github.com/ai4cloudops/SecLLMHolmes">github.com/ai4cloudops/SecLLMHolmes</a></li>
+      <li>GitHub. <cite>CodeQL CLI Documentation</cite>. <a href="https://codeql.github.com/docs/codeql-cli/">codeql.github.com</a></li>
+      <li>BerriAI. <cite>LiteLLM: a unified interface to 100+ LLM providers</cite>. <a href="https://github.com/BerriAI/litellm">github.com/BerriAI/litellm</a></li>
+    </ol>
+  </div>
+
+  <p class="colophon">Benchmark figures: the version-A/B regression suite run on 2026-07-12 on <code>gpt-5.5</code> at temperature 0; the public-dataset matrices run from 2026-05-31 to 2026-06-05. All result files are committed under <code>benchmark/result/</code> and <code>benchmarks/results/</code>.</p>
+
+</article>
