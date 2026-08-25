@@ -1,4 +1,4 @@
-<title>Hunting Real Bugs with LLMs</title>
+<title>VulnHunterX: LLM-powered Automated Vulnerability Hunting</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;0,7..72,600;0,7..72,700;1,7..72,400;1,7..72,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -366,22 +366,9 @@
 
   <header class="masthead">
     <p class="kicker">VinSOC Research · Application Security</p>
-    <h1>Hunting the real bugs among hundreds of SAST alerts</h1>
-    <p class="byline"><span>VinSOC Research Team</span><span>2026-08-23</span><span>18 min read</span></p>
+    <h1>VulnHunterX: LLM-powered Automated Vulnerability Hunting</h1>
+    <p class="byline"><span>VinSOC Research Team</span><span>2026-08-23</span></p>
   </header>
-
-  <p class="eyebrow">Abstract</p>
-  <div class="abstract">
-    <p>Scan an application and you get 400 alerts, of which maybe 30 are real bugs. The dominant cost of running SAST is not analysis time — it is the human reading alert #212, asking for the fourth time that day whether the <code>escapeshellarg()</code> two stack frames up actually neutralizes the sink.</p>
-    <p>This article describes how VulnHunterX automates that job: it forces an LLM to answer a rule-specific checklist of guided questions, with a multi-turn context-expansion loop, before it is allowed to commit to a verdict. Precision rises from 37.7% to 87.3% — and the striking part is that most of that gain survives when you swap in a small model, or one running entirely on local hardware.</p>
-  </div>
-
-  <div class="keyfigs wide">
-    <div class="keyfig"><b>37.7%</b><span>Precision of raw SAST on OWASP BenchmarkPython</span></div>
-    <div class="keyfig"><b>87.3%</b><span>Precision after verification, recall still 98.2%</span></div>
-    <div class="keyfig"><b>397</b><span>Guided-question templates across 7 languages</span></div>
-    <div class="keyfig"><b>$0</b><span>API cost with a local model, still cutting 68.5% of false alarms</span></div>
-  </div>
 
   <!-- ═══ 1 ═══ -->
   <header class="sec">
@@ -389,36 +376,33 @@
     <h2>Introduction</h2>
   </header>
 
-  <p>Every modern SAST engine operates by over-approximation: it flags <em>every</em> program point that attacker-controlled data <em>could</em> reach, because the alternative — silently dropping a point — means letting a real bug through. That is a correct design decision, but it pushes the entire cost onto a human.</p>
+  <p>Every modern SAST engine operates by over-approximation: it flags <em>every</em> program point an attacker <em>could</em> reach, because the alternative — silently skipping it — would risk letting a real bug through. That is a correct design decision, but it pushes the entire cost onto a human.</p>
 
-  <aside class="aside">These three numbers measure the same thing on three different corpora: the fraction of SAST alerts that are genuinely bugs.</aside>
-  <p>On OWASP BenchmarkPython, treating every SAST alert as real yields only <strong>37.7%</strong> precision — nearly two-thirds of the triage effort is wasted. On Juliet C/C++ 1.3.1 the figure is <strong>50%</strong>. On VulnHunterX's in-house regression suite of 125 findings from four deliberately-vulnerable applications, it is <strong>70%</strong>.</p>
+  <p>Concrete data from ground-truth datasets: on OWASP BenchmarkPython, treating every SAST alert as real yields only <strong>37.7%</strong> precision — nearly two-thirds of the triage effort is wasted. On the Juliet C/C++ 1.3.1 dataset the figure is <strong>50%</strong>. To cut the false alarms, the common approach today is to hand the alert to an LLM and ask <em>“is this a real vulnerability?”</em>. The LLM will typically return an answer that sounds very confident but is essentially a gamble, because the model usually does not have the facts to answer — and, more importantly, nobody can check what it reasoned from.</p>
 
-  <p>The common reaction today is to throw an alert at an LLM and ask <em>“is this a real vulnerability?”</em>. That produces a very confident answer that is essentially a coin flip, because the model does not have the facts to answer — and, more importantly, nobody can check what it reasoned from.</p>
-
-  <p>This article describes how VulnHunterX solves that problem: not with a stronger model, but by <strong>forcing the model to answer a structured, per-bug-class set of questions before it is allowed to conclude</strong> — an implementation of the <em>Vulnhalla</em> methodology.</p>
+  <p>This article describes how VulnHunterX solves that problem: not with a stronger model, but by <strong>forcing the model to answer a structured, per-bug-class set of questions before it is allowed to conclude</strong> — an implementation and refinement of the <em>Vulnhalla</em> methodology presented by Simcha at BlackHat EU in December 2025.</p>
 
   <!-- ═══ 2 ═══ -->
   <header class="sec">
     <p class="eyebrow">Section 2</p>
-    <h2>Why deciding an alert is real is so hard</h2>
+    <h2>Why verifying the correctness of an alert is so hard</h2>
   </header>
 
   <h3 class="sub"><span class="subnum">2.1</span>A SAST alert is a fragment stripped of its context</h3>
 
-  <p>What SAST returns in a SARIF file is usually just: a rule id, a file path, a line number, a severity, a message, and — if you are lucky — a chain of dataflow steps from source to sink. To decide that an alert is real, however, the triager needs to know:</p>
+  <p>What SAST returns is usually just: a rule id, a file path, a line number, a severity, a short message, and — if you are lucky — a chain of dataflow steps from source to sink. To decide that an alert is real, however, the analyst needs to know:</p>
 
   <ul>
     <li><strong>The definition of the function containing the flagged line</strong> — which branch the line sits in, and what condition, if any, guards it.</li>
-    <li><strong>Every call site of that function</strong> — where the input actually comes from, how many entry paths exist, and which are attacker-controlled.</li>
-    <li><strong>The bodies of the functions it calls</strong> — the real sink is often two or three layers deep, and an innocuously-named helper can be exactly where a command executes.</li>
+    <li><strong>The call sites of that function (callers)</strong> — where the input actually comes from, how many execution paths exist, and which can be controlled by an attacker.</li>
+    <li><strong>The functions it calls (callees)</strong> — the real sink is often two or three layers deep, and an innocuously-named helper can be exactly where a command executes.</li>
     <li><strong>Type definitions</strong> — struct, class, typedef, enum. A buffer's size lives in the struct definition, not on the flagged line.</li>
     <li><strong>Global and macro declarations</strong> — a single <code>#define MAX_LEN 64</code> can be the entire answer to a buffer-overflow alert.</li>
     <li><strong>The pointer's lifetime</strong> — for use-after-free you need <em>every</em> <code>free()</code>/<code>delete</code>/destructor site across the whole repo, not just the nearest one.</li>
     <li><strong>The dataflow</strong> — source, the intermediate transforms, and the sink; plus the question of whether each transform is a legitimate sanitizer.</li>
   </ul>
 
-  <p>A 40-line window around the flagged line — what most “LLM triage” tools drop into the prompt — almost never contains all of the above.</p>
+  <p>The few lines of code around the flagged line — what most “LLM triage” tools drop into the prompt — almost never contain all of the above.</p>
 
   <h3 class="sub"><span class="subnum">2.2</span>When the model is right about the facts but wrong about the verdict</h3>
 
@@ -433,13 +417,13 @@
     </ul>
   </div>
 
-  <p>Its verdict: <strong>True Positive</strong>, high confidence. Ground truth: <strong>not a bug</strong>.</p>
+  <p>Its verdict: <strong>True Positive</strong>, high confidence — but in reality, this is <strong>not a bug</strong>.</p>
 
-  <p>The remarkable thing is that the model was <strong>wrong about nothing factual</strong>. It correctly identified the source, the flow, and the nature of the check. It only erred at the final step: <code>array_key_exists()</code> does restrict the key — but that is harmless, because every value in the <code>$docs</code> array is a hardcoded literal. The decisive information lives in the <strong>definition of the <code>$docs</code> array</strong>, which never appears in the 40-line window.</p>
+  <p>The remarkable thing is that the model was <strong>wrong about nothing factual</strong>. It correctly identified the source, the flow, and the nature of the check. It only erred at the final step: <code>array_key_exists()</code> does restrict the key — but that is harmless, because every value in the <code>$docs</code> array is a hardcoded literal. The decisive information lives in the <strong>definition of the <code>$docs</code> array</strong>, which never appears in the few dozen lines of code provided.</p>
 
   <figure class="fig wide">
     <div>
-      <svg viewBox="0 0 960 340" role="img" aria-label="The decisive fact — the docs array of hardcoded literals — lies outside the 40-line window, so the model rules True Positive wrongly; when it requests the array definition it correctly rules False Positive.">
+      <svg viewBox="0 0 960 340" role="img" aria-label="The decisive fact — the docs array of hardcoded literals — lies outside the code snippet sent to the model, so the model rules True Positive wrongly; when it requests the array definition it correctly rules False Positive.">
         <defs>
           <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -449,7 +433,7 @@
           </marker>
         </defs>
         <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
-          <text x="20" y="38" font-size="10.5" letter-spacing="1.2" opacity=".72">40-LINE WINDOW SENT TO THE MODEL</text>
+          <text x="20" y="38" font-size="10.5" letter-spacing="1.2" opacity=".72">CODE SNIPPET SENT TO THE MODEL</text>
           <rect x="20" y="50" width="470" height="196" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".5"/>
           <rect x="44" y="70" width="196" height="40" fill="none" stroke="currentColor" stroke-width="1.2"/>
           <text x="58" y="88" font-size="11.5">$_GET['doc']</text>
@@ -466,7 +450,7 @@
           <text x="290" y="144" font-size="11.5">array_key_exists()</text>
           <text x="290" y="159" font-size="9.5" opacity=".7">line 28-29 · GUARD?</text>
           <line x1="240" y1="146" x2="272" y2="146" stroke="currentColor" stroke-width="1.3" marker-end="url(#arN)"/>
-          <text x="600" y="100" font-size="10.5" letter-spacing="1.2" style="fill:var(--accent)">DECISIVE FACT — OUTSIDE THE WINDOW</text>
+          <text x="600" y="100" font-size="10.5" letter-spacing="1.2" style="fill:var(--accent)">DECISIVE FACT — OUTSIDE THE SNIPPET</text>
           <rect x="600" y="112" width="340" height="88" fill="none" style="stroke:var(--accent)" stroke-width="1.8"/>
           <text x="616" y="136" font-size="10.5" style="fill:var(--accent)">$docs = [</text>
           <text x="616" y="152" font-size="10.5" style="fill:var(--accent)">  'a' => ['file' => 'README.txt'],</text>
@@ -484,7 +468,7 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Figure 1</b>The gap between “right about the facts” and “right about the verdict” is one fragment of context 14 lines away. Closing it is not a matter of a more expensive model, but of letting the model request exactly the fragment it is missing.</figcaption>
+    <figcaption><b>Figure 1</b>The gap between “right about the facts” and “right about the verdict” is one fragment of context 14 lines away. Closing it is not a matter of a more expensive model, but of letting the model request the precise source-code context it is missing.</figcaption>
   </figure>
 
   <!-- ═══ 3 ═══ -->
@@ -493,11 +477,11 @@
     <h2>The architecture of VulnHunterX</h2>
   </header>
 
-  <p>VulnHunterX is not a new detector. It sits <em>behind</em> the detectors, takes their SARIF, and decides which alerts a human should actually spend time on.</p>
+  <p>VulnHunterX is not a new detector. It operates <em>behind</em> the detectors, takes in their alerts, and decides which ones a human should actually spend time on.</p>
 
   <figure class="fig wide">
     <div>
-      <svg viewBox="0 0 960 280" role="img" aria-label="Four-stage pipeline: prepare produces the CodeQL database and CSV context store; analyze produces SARIF; verify reads SARIF and calls the LLM, fetching more context from the CSV store each round; report assembles the Markdown.">
+      <svg viewBox="0 0 960 280" role="img" aria-label="Four-stage pipeline: prepare produces the CodeQL database and CSV context store; analyze produces SARIF; verify reads SARIF and calls the LLM, fetching more context from the CSV store each round; report produces the final report.">
         <defs>
           <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -519,7 +503,7 @@
           <text x="546" y="103" font-size="9.5" style="fill:var(--accent)" opacity=".85">guided questions · multi-turn</text>
           <rect x="790" y="58" width="150" height="62" fill="none" stroke="currentColor" stroke-width="1.6"/>
           <text x="806" y="84" font-size="12.5">4 · report</text>
-          <text x="806" y="103" font-size="9.5" opacity=".72">Markdown EN/VI</text>
+          <text x="806" y="103" font-size="9.5" opacity=".72">final report</text>
           <line x1="200" y1="89" x2="266" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
           <text x="204" y="80" font-size="9.0" opacity=".72">source</text>
           <line x1="460" y1="89" x2="526" y2="89" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
@@ -549,14 +533,14 @@
 
   <h3 class="sub"><span class="subnum">3.1</span>Guided questions, per bug class</h3>
 
-  <aside class="aside">Distribution by language: C/C++ 62, Python 67, Java 59, JavaScript 57, Go 54, PHP 52, C# 45, plus a fallback bank.</aside>
-  <p>This is the core component. Rather than one generic prompt, each <code>ruleId</code> in the SARIF is routed to its own question bank. VulnHunterX currently has <strong>397 question templates</strong> across 7 per-language banks.</p>
+  <aside class="aside">Distribution by language: C/C++ 62, Python 67, Java 59, JavaScript 57, Go 54, PHP 52, C# 45, plus a generic bank.</aside>
+  <p>This is the core component. Rather than one generic prompt, each rule id (<code>ruleId</code>) is routed to its own question bank. VulnHunterX currently has <strong>397 question templates</strong> across 7 per-language banks.</p>
 
-  <p><strong>Step 1 — pick the right question bank for the alert.</strong> Each SAST engine names its rules differently, so the system tries two groups — match by rule name first, then match by CWE — stopping at the first that succeeds.</p>
+  <p><strong>Step 1 — pick the right question bank for the alert.</strong> Each SAST engine names its rules differently, so VulnHunterX matches the rule id in several ways, then matches by CWE to find the right bug class to analyze. Only when no match succeeds does the system return the generic bank.</p>
 
   <figure class="fig wide">
     <div>
-      <svg viewBox="0 0 960 320" role="img" aria-label="Two-group routing: match by rule name first (four variants), on no match match by CWE via a 124-entry map, and if neither matches fall back to the generic question bank.">
+      <svg viewBox="0 0 960 320" role="img" aria-label="Two-group routing: match by rule name first (four variants), on no match match by CWE, and if neither matches fall back to the generic question bank.">
         <defs>
           <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -567,7 +551,7 @@
         </defs>
         <g font-family="IBM Plex Mono, ui-monospace, monospace" fill="currentColor">
           <rect x="20" y="48" width="230" height="58" fill="none" stroke="currentColor" stroke-width="1.6"/>
-          <text x="36" y="74" font-size="12.0">Finding from SARIF</text>
+          <text x="36" y="74" font-size="12.0">Finding from SAST</text>
           <text x="36" y="93" font-size="9.5" opacity=".72">ruleId + metadata.cwe</text>
           <rect x="300" y="26" width="380" height="88" fill="none" stroke="currentColor" stroke-width="1.8"/>
           <text x="318" y="50" font-size="12.5">1 · Match by RULE NAME</text>
@@ -575,7 +559,7 @@
           <text x="318" y="96" font-size="10.5">cpp/use-after-free  →  cpp/use-after-free bank</text>
           <rect x="300" y="150" width="380" height="88" fill="none" style="stroke:var(--accent)" stroke-width="2.0"/>
           <text x="318" y="174" font-size="12.5" style="fill:var(--accent)">2 · Match by CWE</text>
-          <text x="318" y="196" font-size="9.5" style="fill:var(--accent)" opacity=".8">when the rule name matches no bank — 124-entry map</text>
+          <text x="318" y="196" font-size="9.5" style="fill:var(--accent)" opacity=".8">when the rule name matches no bank</text>
           <text x="318" y="220" font-size="10.5" style="fill:var(--accent)">CWE-98  →  file-inclusion  →  php/file-inclusion</text>
           <rect x="300" y="268" width="380" height="36" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="5 4" opacity=".65"/>
           <text x="318" y="291" font-size="10.5" opacity=".72">3 · Neither matches → generic question bank</text>
@@ -593,15 +577,15 @@
         </g>
       </svg>
     </div>
-    <figcaption><b>Figure 3</b>The second group matters most operationally: it lets any custom rule reuse an existing question bank without touching code. A custom CodeQL query only needs to declare <code>@id cpp/my-rule</code>; a custom Semgrep rule only needs <code>metadata.cwe</code>.</figcaption>
+    <figcaption><b>Figure 3</b>The rule id is matched in several ways first; when no name matches, the CWE declared in the rule's metadata routes the alert to the right bug class. Only when no match succeeds does the system return the generic bank.</figcaption>
   </figure>
 
-  <p><strong>Step 2 — how the question bank is designed.</strong> The crucial point is that these questions <strong>do not ask “is this a bug”</strong>. They are ordered in a fixed sequence: anchor the model to the exact line, force it to gather facts with checkable coordinates, and only then hand it the decision rule. The <code>cpp/use-after-free</code> bank has 10 questions in four groups.</p>
+  <p><strong>Step 2 — how the question bank is designed.</strong> The questions are ordered in a fixed sequence: anchor the model to the exact line, force it to gather facts with checkable locations, and only then hand it the decision rule. For example, the <code>cpp/use-after-free</code> bank has 10 questions in four groups.</p>
 
   <div class="tablewrap wide">
     <table>
       <thead>
-        <tr><th>Question group</th><th>Its job</th><th>The typical mistake it blocks</th></tr>
+        <tr><th>Question group</th><th>Its job</th><th>The LLM's typical mistake</th></tr>
       </thead>
       <tbody>
         <tr>
@@ -634,7 +618,7 @@
   </div>
 
   <div class="note">
-    <p>This structure is exactly why a small model still works: it does not have to invent what to check, nor set its own threshold for concluding — both are already in the prompt. The model's remaining job is to read the code and answer.</p>
+    <p>This structured design is what lets small models work effectively: the model does not have to figure out what to check, nor set its own threshold for concluding — both are already in the question bank's prompt. Its remaining job is to analyze the code and answer.</p>
   </div>
 
   <p class="qlabel"><span>Guided questions</span> the first four of ten, verbatim as loaded into the prompt from <code>cpp_questions.yaml</code>.</p>
@@ -647,12 +631,12 @@
     </ul>
   </div>
 
-  <p>Beyond the question list, each bank declares three fields that control the engine's behavior. For <code>cpp/use-after-free</code>:</p>
+  <p>Beyond the question list, each bank also carries fields that control the engine's behavior. For example, for <code>cpp/use-after-free</code>:</p>
 
   <ul>
     <li><code>additional_context: [free_sites, caller, all_callers, struct, callees, destructor, field_writes]</code> — the context types the model is allowed to request for this bug class.</li>
     <li><code>context_hint</code> — a suggested order: fetch the pointer's <code>free_sites</code> first, then where it is allocated, its type definition, and the destructor of its owning class.</li>
-    <li><code>min_iterations: 3</code> — the minimum number of conversation rounds, i.e. the model <strong>is not allowed</strong> to conclude on its very first answer.</li>
+    <li><code>min_iterations: 3</code> — the minimum number of conversation rounds, i.e. the model <strong>is not allowed</strong> to conclude on its very first round.</li>
   </ul>
 
   <h3 class="sub"><span class="subnum">3.2</span>Answer first, conclude second</h3>
@@ -673,28 +657,28 @@
     </table>
   </div>
 
-  <p>Three principles that accompany the procedure matter as much as the questions themselves:</p>
+  <p>The procedure also comes with three principles that matter as much as the questions themselves:</p>
 
   <ul>
-    <li><strong>Asymmetric evidence bar.</strong> To rule <em>False Positive</em>, the model must point to a <strong>specific, visible</strong> defense in the code — a bounds check, a sanitizer call, a type guarantee, or a framework mechanism. The exact constraint in the prompt: <em>“Absence of evidence of a vulnerability is NOT evidence of safety.”</em> The model is also forbidden from inferring safety from a function's name or from attributes such as <code>static</code> or <code>__init</code>.</li>
-    <li><strong>If it cannot see it, it cannot conclude.</strong> If the flagged line is not present in the provided code, the model <strong>may not</strong> answer <em>False Positive</em> — it must return <em>Needs More Data</em> and request the missing code. This directly blocks the worst failure mode of LLM triage: fabricating a safe verdict for a line it never read.</li>
+    <li><strong>Concrete evidence.</strong> To rule <em>False Positive</em> (a false alarm), the model must point to a <strong>specific, visible</strong> check or defense in the code — a bounds check, a sanitizer call, or a framework protection mechanism. The exact constraint in the prompt: <em>“Absence of evidence of a vulnerability is NOT evidence of safety.”</em> The model is also forbidden from inferring safety from a function's name or from attributes such as <code>static</code> or <code>__init</code>.</li>
+    <li><strong>No evidence, no verdict.</strong> If the flagged line is not present in the provided code, the model <strong>may not</strong> answer <em>False Positive</em> — it must return <em>Needs More Data</em> and request the missing code. This blocks the LLM's usual reasoning shortcut: fabricating a safe verdict for a line it never read.</li>
     <li><strong>The rule locates a sink; it does not fix the bug class.</strong> If the flagged sink is genuinely exploitable, the model must rule <em>True Positive</em> even when the real class differs from the rule's CWE — naming the real class in its reasoning. Conversely, it is forbidden from “borrowing” a different bug at a different line to justify the alert under review.</li>
   </ul>
 
   <aside class="aside">This is the single easiest mistake when rolling your own LLM triage: using the rule's metadata as evidence about the instance.</aside>
-  <p>The prompt also teaches the model to read rule metadata correctly: <code>precision: high</code> describes the reliability of the <strong>pattern</strong> across a corpus, and says nothing about whether <strong>this instance</strong> is exploitable; <code>security-severity</code> is the rule's worst-case rating, useful only to prioritize reviewer attention, never a reason to lean toward True Positive.</p>
+  <p>The prompt also guides the model on reading rule metadata correctly: <code>precision: high</code> describes the reliability of the <strong>pattern</strong> across a corpus, and says nothing about whether <strong>this instance</strong> is exploitable; <code>security-severity</code> is the rule's worst-case rating, useful only to prioritize reviewer attention, never a reason to lean toward True Positive.</p>
 
-  <p>The result of all these constraints is a change in the nature of the output: <strong>a verdict without an answer sheet is unfalsifiable; a verdict with one, where every claim points to a specific line number, is reviewable in thirty seconds</strong> — you just open the three cited line numbers and check.</p>
+  <p>The net effect of all these constraints is a better workflow for the security engineer: for each alert, VulnHunterX returns <strong>a verdict tied to specific line numbers of code</strong>, so a reviewer can check it in seconds and make the final call themselves.</p>
 
   <h3 class="sub"><span class="subnum">3.3</span>Multi-turn context expansion</h3>
 
-  <p>When the model finds it lacks a fact, it can request more context from a fixed vocabulary, and the engine serves the request from the CSV store.</p>
+  <p>When the model finds it lacks a fact, it can request more context from a fixed, pre-extracted data set.</p>
 
   <div class="tablewrap wide">
     <table>
       <thead><tr><th>Request</th><th>What it returns</th></tr></thead>
       <tbody>
-        <tr><td><code>caller:</code> / <code>all_callers:</code></td><td>The calling function's code / all callers (up to 10)</td></tr>
+        <tr><td><code>caller:</code> / <code>all_callers:</code></td><td>The calling function's code / all callers (currently capped at 10)</td></tr>
         <tr><td><code>function:</code> / <code>callees:</code> / <code>callee_bodies:</code></td><td>The sink function's body, the list of functions it calls, and their bodies</td></tr>
         <tr><td><code>struct:</code> / <code>typedef:</code> / <code>enum:</code></td><td>Type definition, type alias, enum with its values</td></tr>
         <tr><td><code>global:</code> / <code>macro:</code></td><td>Global variable declaration, macro definition</td></tr>
@@ -707,7 +691,7 @@
 
   <figure class="fig wide">
     <div>
-      <svg viewBox="0 0 960 320" role="img" aria-label="Multi-turn loop: the engine builds a prompt, the model returns a JSON envelope; if it still requests context or has not run the minimum rounds, ContextProvider reads the CSV store and the loop repeats, otherwise the verdict is final.">
+      <svg viewBox="0 0 960 320" role="img" aria-label="Multi-turn loop: the engine builds a prompt, the model returns a structured JSON object; if it still requests context or has not run the minimum rounds, ContextProvider reads the CSV store and the loop repeats, otherwise the verdict is final.">
         <defs>
           <marker id="arN" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -726,7 +710,7 @@
           <text x="346" y="80" font-size="12.5" style="fill:var(--accent)">LLM</text>
           <text x="346" y="100" font-size="9.5" style="fill:var(--accent)" opacity=".85">answers each question</text>
           <text x="346" y="118" font-size="9.5" style="fill:var(--accent)" opacity=".85">traces the dataflow</text>
-          <text x="346" y="136" font-size="9.5" style="fill:var(--accent)" opacity=".85">emits a JSON envelope</text>
+          <text x="346" y="136" font-size="9.5" style="fill:var(--accent)" opacity=".85">emits a structured JSON object</text>
           <line x1="270" y1="104" x2="326" y2="104" stroke="currentColor" stroke-width="1.5" marker-end="url(#arN)"/>
           <path d="M700,52 L820,104 L700,156 L580,104 Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
           <text x="700" y="99" font-size="10.0" text-anchor="middle">context_needed empty?</text>
@@ -745,37 +729,37 @@
           <path d="M226,212 L145,212 L145,158" fill="none" style="stroke:var(--accent)" stroke-width="1.7" marker-end="url(#arA)"/>
           <text x="20" y="258" font-size="9.5" style="fill:var(--accent)">new context is appended — the model re-answers every question</text>
           <line x1="20" y1="278" x2="940" y2="278" stroke="currentColor" stroke-width="1" opacity=".28"/>
-          <text x="20" y="300" font-size="10.0" opacity=".72">In-house suite: mean 2.49 rounds / finding · upper bound set by max_iterations</text>
+          <text x="20" y="300" font-size="10.0" opacity=".72">In practice: mean 2.49 conversation rounds / alert · upper bound set by max_iterations</text>
         </g>
       </svg>
     </div>
     <figcaption><b>Figure 4</b>Both conditions must hold for the loop to stop: the model requests no more context <em>and</em> it has run the minimum rounds for that bug class. For use-after-free, <code>min_iterations: 3</code> means a first-round conclusion is blocked even when the model is confident.</figcaption>
   </figure>
 
-  <aside class="aside">VulnHunterX does not rebuild the DFG — it reuses the dataflow analysis that is CodeQL's strength.</aside>
+  <aside class="aside">VulnHunterX does not rebuild the DFG — it reuses the dataflow analysis that is the strength of tools such as CodeQL or tree-sitter.</aside>
   <p>The prompt always includes the <strong>dataflow path extracted by the SAST engine itself</strong>, annotated <code>[SOURCE]</code> / <code>[TRANSFORM]</code> / <code>[SINK]</code> per step. What VulnHunterX adds is what SAST does not provide: the call graph, type definitions, and object lifetimes.</p>
 
   <h3 class="sub"><span class="subnum">3.4</span>The output</h3>
 
-  <p>The model may not answer freely. It must return a strictly-structured JSON envelope, and the engine saves each finding as a file under <code>output/&lt;lang&gt;/&lt;repo&gt;/verification_results/</code>. The envelope has seven fields:</p>
+  <p>The model may not answer freely. It must return a structured JSON object with the following fields:</p>
 
   <div class="tablewrap wide">
     <table>
       <thead><tr><th>Field</th><th>Contents</th></tr></thead>
       <tbody>
-        <tr><td><code>answers[]</code></td><td>The answer sheet — one element per guided question, with line citations</td></tr>
+        <tr><td><code>answers[]</code></td><td>The answer sheet for each question, with line citations</td></tr>
         <tr><td><code>data_flow</code></td><td>The traced flow, as <code>source (line N) → transform (line M) → sink (line K)</code></td></tr>
         <tr><td><code>verdict</code></td><td><code>True Positive</code> / <code>False Positive</code> / <code>Needs More Data</code></td></tr>
-        <tr><td><code>confidence</code></td><td><code>High</code> / <code>Medium</code> / <code>Low</code> — exactly one of the three</td></tr>
+        <tr><td><code>confidence</code></td><td><code>High</code> / <code>Medium</code> / <code>Low</code></td></tr>
         <tr><td><code>confidence_score</code></td><td>A 0.0–1.0 score; if the model gives none, the engine maps it from the categorical level (High = 0.85, Medium = 0.6, Low = 0.3)</td></tr>
-        <tr><td><code>reasoning</code></td><td>A sentence or two, required to reference the answer sheet and the dataflow</td></tr>
+        <tr><td><code>reasoning</code></td><td>A few sentences of explanation, referencing the answer sheet and the dataflow</td></tr>
         <tr><td><code>context_needed[]</code></td><td>The missing context, used to trigger the next conversation round</td></tr>
       </tbody>
     </table>
   </div>
 
   <aside class="aside">Because of this instrumentation, every cost figure in Section 4 is traceable back to an individual finding, rather than being an estimate.</aside>
-  <p>Alongside the model-generated part, the engine records the measurements of the run itself: <code>iterations</code>, <code>model</code>, <code>timestamp</code>, <code>elapsed_seconds</code>, <code>input_tokens</code> / <code>output_tokens</code> / <code>cached_input_tokens</code>, and <code>cost_usd</code>.</p>
+  <p>Alongside the model-generated part, the engine records the run's own details: <code>iterations</code> (conversation rounds used), <code>model</code>, <code>timestamp</code>, <code>elapsed_seconds</code>, <code>input_tokens</code> / <code>output_tokens</code> / <code>cached_input_tokens</code>, and <code>cost_usd</code>.</p>
 
   <p>Below is a real verdict, metadata trimmed, for a <code>double-free</code> alert reported by Semgrep at <code>dvcp.c:62</code>:</p>
 
@@ -812,7 +796,7 @@
   "cached_input_tokens": 6016
 }</code></pre>
 
-  <p>This record illustrates exactly what Section 3.2 describes. The rule declares <code>precision: very-high</code>, but the model does not take that as evidence. It enumerates <strong>exactly</strong> the two known free sites with file and line, shows that the flagged line is not among them, and lowers confidence to <code>Low</code> rather than asserting certainty.</p>
+  <p>This record illustrates what Section 3.2 describes. The rule declares <code>precision: very-high</code>, but the model does not take that as evidence. It enumerates <strong>exactly</strong> the two known free sites with file and line, shows that the flagged line is not among them, and lowers confidence to <code>Low</code> rather than asserting certainty.</p>
 
   <p>The three verdict values are used as follows in practice:</p>
 
@@ -824,8 +808,8 @@
 
   <ul>
     <li><strong>True Positive</strong> — queued for handling, ordered by <code>confidence_score</code> and severity.</li>
-    <li><strong>False Positive</strong> — closed, but the answer sheet is retained so the decision can be audited later. This is the difference from filtering by regex or an exclude-list: every dismissal comes with a reason that has coordinates.</li>
-    <li><strong>Needs More Data</strong> — a state that is retained <strong>deliberately</strong>. A triage system that can say “I don't have enough facts” is far more useful than one that always answers, because it turns the hard cases into a short list for a human rather than mixing lucky guesses into the same pile as grounded conclusions. Across the 125-finding regression suite, only <strong>one</strong> case landed here.</li>
+    <li><strong>False Positive</strong> — closed, but the answer sheet is retained so the decision can be checked later. This is the difference from filtering by regex or an exclude-list: every dismissal comes with a reason.</li>
+    <li><strong>Needs More Data</strong> — a state that is retained <strong>deliberately</strong>. A triage system that can say “I don't have enough facts” is far more useful than one that always answers, because it turns the hard cases into a short list for a human rather than mixing lucky guesses into the same pile as grounded conclusions.</li>
   </ul>
 
   <!-- ═══ 4 ═══ -->
@@ -865,9 +849,9 @@
     </table>
   </div>
 
-  <p>This is the cleanest result in the whole set: the full pipeline beats both ablations on <strong>precision and recall</strong>, for every model tested. Across all four datasets, with the strongest model tested, the system cuts false positives by <strong>78.6%–91.4%</strong> while retaining <strong>87.5%–98.2%</strong> of the real bugs.</p>
+  <p>Across all four datasets, with the strongest model tested, the system cuts false positives by <strong>78.6%–91.4%</strong> while retaining <strong>87.5%–98.2%</strong> of the real bugs.</p>
 
-  <h3 class="sub"><span class="subnum">4.3</span>You do not need a strong LLM</h3>
+  <h3 class="sub"><span class="subnum">4.3</span>You do not need a strong LLM: small and local models work well</h3>
 
   <p>This is the most operationally valuable result, because it determines running cost. Same OWASP BenchmarkPython, same pipeline, only the model changes.</p>
 
@@ -908,9 +892,9 @@
     <figcaption><b>Figure 5</b>A mini model takes precision from 37.7% to 82.7%, only 4.6 points behind the strongest. A model running entirely locally, at zero API cost, still cuts more than two-thirds of the false alarms while keeping 99.1% of the real bugs.</figcaption>
   </figure>
 
-  <p>More telling than the absolute number is how much the scaffolding contributes to the weak model itself. For gpt-4.1-mini on the same dataset: no guided questions → 64.0% precision; generic questions → 59.1%; rule-specific guided questions → <strong>82.7%</strong>. The right question bank gives the small model <strong>over 18 points of precision</strong> — more than the gap between it and the large model.</p>
+  <p>More telling than the absolute number is how much the scaffolding contributes to the weak model itself. For gpt-4.1-mini on the same dataset: no guided questions → 64.0% precision; with rule-specific guided questions → <strong>82.7%</strong>. The right question bank gives the small model <strong>over 18 points of precision</strong> — more than the gap between it and the large model.</p>
 
-  <p>The SecLLMHolmes results make this even clearer once you put it in dollars:</p>
+  <p>Evaluating the cost of using an LLM:</p>
 
   <div class="tablewrap">
     <table>
@@ -921,26 +905,23 @@
         <tr><td>gpt-4.1-mini</td><td class="num">74.7%</td><td class="num">89.9%</td><td class="num">$0.73</td></tr>
         <tr class="hl"><td>qwen3-coder (local)</td><td class="num">70.5%</td><td class="num">87.8%</td><td class="num">$0</td></tr>
       </tbody>
-      <caption>LiteLLM has no price for DeepSeek, so the harness records $0; the real cost is one to two orders of magnitude below gpt-5.</caption>
     </table>
   </div>
 
   <p>The local model is only <strong>7.9 precision points</strong> behind <code>gpt-5</code>, while <code>gpt-5</code> costs $16.75 for the same workload — and <code>gpt-5</code> is not even the best model in the table. For a security team that cannot send source code off-premises, this is the difference between “usable” and “not usable”.</p>
 
-  <h3 class="sub"><span class="subnum">4.4</span>Where that conclusion ends</h3>
+  <h3 class="sub"><span class="subnum">4.4</span>Limitations</h3>
 
   <p>The small model's advantage is uneven across bug classes. On Juliet C/C++ — which tests memory-safety reasoning — gpt-4.1-mini cuts only <strong>23.9%</strong> of false positives, while DeepSeek reaches <strong>82.2%</strong> on the same dataset and pipeline. Two local-model runs on OWASP BenchmarkJava abstained on essentially every finding — recorded as “100% FP-reduction” but really a failure wearing a success metric's clothes, and those rows are kept in the published comparison tables.</p>
 
   <div class="note">
-    <p>For common web bug classes — injection, path traversal, XSS, deserialization — a small or local model plus good scaffolding is production-usable. For memory-lifetime reasoning in C/C++, scaffolding does not substitute for model capability.</p>
+    <p>For common web bug classes — injection, path traversal, XSS, deserialization — a small or local model plus good scaffolding is sufficient. For reasoning about memory-related bugs in C/C++, scaffolding does not substitute for model capability.</p>
   </div>
-
-  <p>Guided questions are also not always beneficial. On Juliet, <code>ablation-generic</code> (88.1%/98.9%) <em>beat</em> the full pipeline (83.8%/93.8%) with DeepSeek. Our read: Juliet's synthetic <code>bad()</code>/<code>good()</code> function pairs are self-contained by construction, so rule-specific questions only lengthen the prompt without adding signal, and sometimes talk the model into over-thinking a two-line case. Guided questions earn their keep on real code, where source and sink are separated by several call layers.</p>
 
   <!-- ═══ 5 ═══ -->
   <header class="sec">
     <p class="eyebrow">Section 5</p>
-    <h2>Multi-language support: both compiled and interpreted</h2>
+    <h2>Other strengths of VulnHunterX</h2>
   </header>
 
   <p>VulnHunterX supports <strong>8 languages</strong>, covering both families:</p>
@@ -959,10 +940,9 @@
     </table>
   </div>
 
-  <aside class="aside">PHP accounts for 72 of the 125 findings in the in-house suite, and still reaches 89% precision / 100% recall with only tree-sitter context.</aside>
-  <p>The technically interesting part is the <strong>fallback mechanism</strong>: when no CodeQL database can be built — because the language is unsupported, the build fails, or the repo lacks a toolchain — the system extracts context with tree-sitter, which only needs to parse syntax, not compile. The context is lower-quality, since there is no precise interprocedural call graph, but the verification pipeline still runs instead of halting.</p>
+  <p>The technically interesting part is the <strong>fallback mechanism</strong>: when no CodeQL database can be built — because the language is unsupported, the build fails, or the repo lacks a toolchain — the system extracts context with tree-sitter, which only needs to parse syntax, not compile. The context is lower-quality, since there is no precise interprocedural call graph, but the verification pipeline still runs.</p>
 
-  <p>On the SAST side, the system runs with three engines (CodeQL, Semgrep, OpenGrep) and five rule profiles from <code>standard</code> to <code>full</code>, where <code>full</code> layers 64 custom CodeQL queries and 103 custom Semgrep rules on top of the built-in suites. On the LLM side, any provider LiteLLM speaks is usable: OpenAI, Anthropic, Gemini, DeepSeek, and Ollama (local or cloud).</p>
+  <p>On the SAST side, the system runs with three engines (CodeQL, Semgrep, OpenGrep) and five rule profiles from <code>standard</code> to <code>full</code>, where <code>full</code> adds 64 custom CodeQL queries and 103 custom Semgrep rules on top of the built-in suites. On the LLM side, VulnHunterX supports most popular LiteLLM providers: OpenAI, Anthropic, Gemini, DeepSeek, and Ollama (local or cloud).</p>
 
   <pre><code><span class="cmt">$</span> vuln-hunter-x scan --url https://github.com/org/app.git \
       --lang python --profile full --limit 10</code></pre>
@@ -970,13 +950,12 @@
   <!-- ═══ 6 ═══ -->
   <header class="sec">
     <p class="eyebrow">Section 6</p>
-    <h2>What this tool cannot do</h2>
+    <h2>Limitations of VulnHunterX</h2>
   </header>
 
   <ul>
     <li><strong>Absence-of-control bugs are out of reach.</strong> Missing authorization, disabled CSRF middleware, no rate limiting — SAST does not reliably flag these, so there is nothing for the verifier to verify. Reports carry an explicit coverage-limitation caveat for exactly this reason.</li>
     <li><strong>Quality is bounded by the input SAST.</strong> The verifier can only remove false alarms; it cannot create an alert the upstream engine missed. The system's recall is capped by the SAST's recall.</li>
-    <li><strong>On synthetic fixtures, guided questions can backfire</strong> — as shown in Section 4.4.</li>
   </ul>
 
   <!-- ═══ 7 ═══ -->
@@ -1013,6 +992,5 @@
     </ol>
   </div>
 
-  <p class="colophon">Benchmark figures: the version-A/B regression suite run on 2026-07-12 on <code>gpt-5.5</code> at temperature 0; the public-dataset matrices run from 2026-05-31 to 2026-06-05. All result files are committed under <code>benchmark/result/</code> and <code>benchmarks/results/</code>.</p>
 
 </article>
